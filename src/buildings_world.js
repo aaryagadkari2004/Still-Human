@@ -143,18 +143,61 @@ function regionPlan(gen, rx, ry) {
     const x = ox + 4 + Math.floor(rnd() * (REGION - 8 - t.w)), y = oy + 4 + Math.floor(rnd() * (REGION - 8 - t.h));
     tryPlace(tpl, x, y);
   }
+  plan.camps = [];
+  planCamp(gen, rx, ry, plan, rnd);
   regionCache.set(key, plan);
   if (regionCache.size > 150) regionCache.delete(regionCache.keys().next().value);
   return plan;
 }
 // Buildings and roads overlapping a tile rectangle.
+// ---- Camps ---------------------------------------------------------------------------------------
+// Abandoned campsites, only deep in the woods: a tent, a campfire (often still burning) and
+// anywhere from no crates to a few. Crates are containers with camping loot.
+const CAMP_CLEAR = 4;           // tiles of cleared ground around the fire
+const CAMP_CHANCE = 0.55;       // chance a region even tries for a camp (most fail: not enough forest)
+function planCamp(gen, rx, ry, plan, rnd) {
+  const s = gen.seed ^ 0xca39;
+  if (hash01(rx, ry, s) >= CAMP_CHANCE) return;
+  const ox = rx * REGION, oy = ry * REGION;
+  for (let tries = 0; tries < 8; tries++) {
+    const tx = ox + 6 + Math.floor(rnd() * (REGION - 12)), ty = oy + 6 + Math.floor(rnd() * (REGION - 12));
+    // Deep woods: thick forest at the spot and all around it.
+    let ok = gen.forest(tx, ty) > 0.8;
+    for (const [dx, dy] of [[-6, 0], [6, 0], [0, -6], [0, 6]]) if (ok && gen.forest(tx + dx, ty + dy) < 0.55) ok = false;
+    for (let y = ty - CAMP_CLEAR - 1; ok && y <= ty + CAMP_CLEAR + 1; y++)
+      for (let x = tx - CAMP_CLEAR - 1; ok && x <= tx + CAMP_CLEAR + 1; x++) { const f = gen.field(x, y); if (f.isWater || f.isDirt) ok = false; }
+    if (ok && plan.buildings.some(b => tx > b.x - 8 && tx < b.x + b.w + 8 && ty > b.y - 8 && ty < b.y + b.h + 8)) ok = false;
+    if (ok && plan.roads.some(r => tx > r.x - 6 && tx < r.x + r.w + 6 && ty > r.y - 6 && ty < r.y + r.h + 6)) ok = false;
+    if (!ok) continue;
+    const c = { id: `camp:${rx},${ry}`, camp: true, cond: 'abandoned', tx, ty, seed: hashInt(tx, ty, s), objects: [] };
+    const fx = tx * TILE + 16, fy = ty * TILE + 20;
+    c.objects.push({ k: K.campfire, x: fx, y: fy, camp: c, lit: rnd() < 0.65, ph: Math.floor(rnd() * 8) });
+    // Spots around the fire, clockwise from north. The tent takes one; crates take others.
+    const SPOTS = [[0, -50], [44, -34], [52, 6], [40, 40], [0, 50], [-40, 40], [-52, 6], [-44, -34]];
+    const tentSpot = Math.floor(rnd() * 8);
+    const [tdx, tdy] = SPOTS[tentSpot];
+    const tentR = 1.25;  // the tent is wide: push it further out
+    c.objects.push({ k: K.tent, x: Math.round(fx + tdx * tentR), y: Math.round(fy + tdy * tentR), camp: c });
+    const r = rnd(), crates = r < 0.25 ? 0 : r < 0.65 ? 1 : r < 0.9 ? 2 : 3;
+    const free = [2, 3, 4, 5, 6].map(d => (tentSpot + d) % 8);   // not right beside the tent
+    for (let i = 0; i < crates; i++) {
+      const j = Math.floor(rnd() * free.length), [dx, dy] = SPOTS[free.splice(j, 1)[0]];
+      const sz = rnd(), k = sz < 0.45 ? K.crateS : sz < 0.8 ? K.crateM : K.crateL;
+      c.objects.push({ k, x: fx + dx + Math.floor(rnd() * 7) - 3, y: fy + dy + Math.floor(rnd() * 5) - 2, camp: c, ci: i });
+    }
+    plan.camps.push(c);
+    return;
+  }
+}
+
 function plansInRect(gen, x0, y0, x1, y1) {
-  const out = { buildings: [], roads: [] };
+  const out = { buildings: [], roads: [], camps: [] };
   for (let ry = Math.floor(y0 / REGION); ry <= Math.floor(y1 / REGION); ry++)
     for (let rx = Math.floor(x0 / REGION); rx <= Math.floor(x1 / REGION); rx++) {
       const p = regionPlan(gen, rx, ry);
       for (const b of p.buildings) if (b.x <= x1 && b.x + b.w > x0 && b.y <= y1 && b.y + b.h > y0) out.buildings.push(b);
       for (const rd of p.roads) if (rd.x <= x1 && rd.x + rd.w > x0 && rd.y <= y1 && rd.y + rd.h > y0) out.roads.push(rd);
+      for (const c of p.camps) if (c.tx + 4 >= x0 && c.tx - 4 <= x1 && c.ty + 4 >= y0 && c.ty - 4 <= y1) out.camps.push(c);
     }
   return out;
 }

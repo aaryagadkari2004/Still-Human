@@ -33,9 +33,9 @@ const GEN = {
 // cw,ch: collider size (centered on base, extending up). 0 = walk through.
 // rx,ry: shadow ellipse radii.  tall: fades when the player walks behind.
 const KINDS = [
-  { name: 'oak',     sx: 0,   sy: 0,   sw: 64, sh: 96, ax: 32, ay: 95, cw: 12, ch: 7,  rx: 20, ry: 6, tall: true },
-  { name: 'pine',    sx: 64,  sy: 0,   sw: 64, sh: 96, ax: 31, ay: 95, cw: 10, ch: 7,  rx: 17, ry: 5, tall: true },
-  { name: 'dead',    sx: 128, sy: 0,   sw: 64, sh: 96, ax: 33, ay: 95, cw: 12, ch: 7,  rx: 15, ry: 5, tall: true },
+  { name: 'oak',     sx: 0,   sy: 0,   sw: 64, sh: 96, ax: 32, ay: 95, cw: 12, ch: 7,  rx: 20, ry: 6, tall: true, tree: true },
+  { name: 'pine',    sx: 64,  sy: 0,   sw: 64, sh: 96, ax: 31, ay: 95, cw: 10, ch: 7,  rx: 17, ry: 5, tall: true, tree: true },
+  { name: 'dead',    sx: 128, sy: 0,   sw: 64, sh: 96, ax: 33, ay: 95, cw: 12, ch: 7,  rx: 15, ry: 5, tall: true, tree: true },
   { name: 'bush1',   sx: 0,   sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 13, ry: 4 },
   { name: 'bush2',   sx: 32,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 13, ry: 4 },
   { name: 'bush3',   sx: 64,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 12, ry: 3 },
@@ -44,6 +44,12 @@ const KINDS = [
   { name: 'tall',    sx: 160, sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 0,  ry: 0 },
   { name: 'log',     sx: 64,  sy: 128, sw: 64, sh: 32, ax: 32, ay: 28, cw: 56, ch: 11, rx: 28, ry: 4, low: true },
   { name: 'boulder', sx: 0,   sy: 128, sw: 64, sh: 64, ax: 32, ay: 60, cw: 54, ch: 20, rx: 29, ry: 7, tall: true },
+  // Camp pieces (camp sheet). Crates are containers; the campfire animates its flame and smoke.
+  { name: 'tent',     img: 'camp', sx: 8,  sy: 22, sw: 48, sh: 36, ax: 24, ay: 34, cw: 42, ch: 14, rx: 23, ry: 5, tall: true },
+  { name: 'crateS',   img: 'camp', sx: 88, sy: 44, sw: 16, sh: 14, ax: 8,  ay: 12, cw: 12, ch: 6,  rx: 7,  ry: 2, low: true, crate: 'crateS' },
+  { name: 'crateM',   img: 'camp', sx: 148, sy: 38, sw: 24, sh: 20, ax: 12, ay: 18, cw: 18, ch: 7, rx: 10, ry: 3, low: true, crate: 'crateM' },
+  { name: 'crateL',   img: 'camp', sx: 208, sy: 32, sw: 32, sh: 26, ax: 16, ay: 24, cw: 28, ch: 9, rx: 15, ry: 3, crate: 'crateL' },
+  { name: 'campfire', img: 'camp', sx: 0,  sy: 64, sw: 64, sh: 64, ax: 32, ay: 56, cw: 20, ch: 7,  rx: 0,  ry: 0, fire: true },
 ];
 const K = Object.fromEntries(KINDS.map((k, i) => [k.name, i]));
 
@@ -126,7 +132,7 @@ class WorldGen {
     const rawW = new Uint8Array(S * S), rawD = new Uint8Array(S * S), dry = new Uint8Array(S * S);
     // Houses and roads near this chunk (see buildings_world.js).
     const plans = typeof plansInRect === 'function'
-      ? plansInRect(this, ox - LOT_MARGIN, oy - LOT_MARGIN, ox + S + LOT_MARGIN, oy + S + LOT_MARGIN) : { buildings: [], roads: [] };
+      ? plansInRect(this, ox - LOT_MARGIN - 4, oy - LOT_MARGIN - 4, ox + S + LOT_MARGIN + 4, oy + S + LOT_MARGIN + 4) : { buildings: [], roads: [], camps: [] };
     const inRoad = (x, y) => plans.roads.some(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
     for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
       const f = this.field(ox + i, oy + j);
@@ -176,6 +182,14 @@ class WorldGen {
         if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) bld[ty * CHUNK + tx] = 1;
       }
     }
+    // Camps clear a small round patch of forest around their fire.
+    for (const c of plans.camps || []) {
+      for (let y = c.ty - CAMP_CLEAR; y <= c.ty + CAMP_CLEAR; y++) for (let x = c.tx - CAMP_CLEAR; x <= c.tx + CAMP_CLEAR; x++) {
+        const tx = x - cx * CHUNK, ty = y - cy * CHUNK;
+        if (tx < 0 || ty < 0 || tx >= CHUNK || ty >= CHUNK) continue;
+        if ((x - c.tx) ** 2 + (y - c.ty) ** 2 <= (CAMP_CLEAR + 0.5) ** 2) lot[ty * CHUNK + tx] = 1;
+      }
+    }
     const type = new Uint8Array(CHUNK * CHUNK);
     const edge = new Uint8Array(CHUNK * CHUNK).fill(EDGE_NONE);
     const vari = new Uint8Array(CHUNK * CHUNK);
@@ -209,6 +223,10 @@ class WorldGen {
     const objects = [];
     const used = new Uint8Array(CHUNK * CHUNK);
     const s = this.seed;
+    // Camp pieces whose base falls inside this chunk.
+    for (const c of plans.camps || []) for (const o of c.objects) {
+      if (Math.floor(o.x / CPX) === cx && Math.floor(o.y / CPX) === cy) objects.push(o);
+    }
 
     // Trees: at most one per 2x2 block.
     for (let qy = 0; qy < CHUNK; qy += 2) for (let qx = 0; qx < CHUNK; qx += 2) {

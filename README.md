@@ -55,15 +55,20 @@ right-click to remove one, C to re-centre.
   and a blood pool spreads underneath. Bodies stay for 90 seconds, then fade.
 - Every zombie gets its own clothing colours (top and bottom; dresses are one colour). Skin, hair,
   eyes, blood and shoes keep the original art.
-- Hordes: lone zombies are most common (55%), then groups of 2-4 (28%), hordes of 5-8 (12%) and
-  large hordes of 10-15 (5%). Hordes drift around together, and when one spots you the whole
-  horde comes. Bigger hordes spawn further out. Up to 36 zombies around you at once.
+- Hordes: lone zombies are most common (72%), then groups of 2-4 (22%), hordes of 5-8 (about 5%)
+  and large hordes of 10-15 (about 1%). Hordes drift around together, and when one spots you the
+  whole horde comes. Groups keep their distance: a new group never spawns within 30 tiles of
+  another (60 tiles if either is a big horde), only one big horde is around at a time, and no
+  zombie spawns within 7 tiles of another. Up to 36 zombies around you at once.
 - Body-part health: head, torso, each arm, hand, leg and foot. Where a zombie hits you depends on
   where it is relative to the way you're facing. If any part reaches 0%, you die. The top-left bar
   shows your most injured part.
 - Bleeding: below 70% a part bleeds lightly (clots by itself after 30 s unless hit again),
   below 45% it bleeds steadily, and below 20% it bleeds severely. Bleeding drains that part
   until treated, leaves a blood trail, shows as drops next to the health bar, and pulses on the body figure.
+- Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,
+  with flickering flame and drifting smoke) and none, one or a few crates (small, medium, large)
+  holding canned food, water, medical supplies and camping gear. Click a crate to search it.
 - Houses: lone cabins and small hamlets (3-5 houses along a dirt road), from 4 floor plans that are
   randomly mirrored, with 3 exterior materials. Each house has a condition (abandoned, looted or
   locked up) that sets its doors, windows and loot. Roofs fade and the outside goes dark when you

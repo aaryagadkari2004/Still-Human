@@ -185,7 +185,7 @@ function buildMapImage(cx, cy) {
   const c = document.createElement('canvas'); c.width = c.height = CHUNK;
   const g = c.getContext('2d'), im = g.createImageData(CHUNK, CHUNK);
   const trees = new Uint8Array(256);
-  for (const o of d.objects) if (KINDS[o.k].tall && o.k !== K.boulder) {
+  for (const o of d.objects) if (KINDS[o.k].tree) {
     const tx = Math.floor(o.x / TILE) - cx * CHUNK, ty = Math.floor(o.y / TILE) - cy * CHUNK;
     if (tx >= 0 && ty >= 0 && tx < CHUNK && ty < CHUNK) trees[ty * CHUNK + tx] = 1;
   }
@@ -519,11 +519,14 @@ const Z_DESPAWN = 46 * TILE;  // zombies further than this are removed
 
 // Horde sizes: solo zombies are common, big hordes are rare.
 const HORDES = [
-  { weight: 55, min: 1,  max: 1 },   // lone zombie
-  { weight: 28, min: 2,  max: 4 },   // small group
-  { weight: 12, min: 5,  max: 8 },   // horde
-  { weight: 5,  min: 10, max: 15 },  // large horde
+  { weight: 72,  min: 1,  max: 1 },   // lone zombie
+  { weight: 22,  min: 2,  max: 4 },   // small group
+  { weight: 4.8, min: 5,  max: 8 },   // horde
+  { weight: 1.2, min: 10, max: 15 },  // large horde
 ];
+// Groups keep their distance from each other: a new group never spawns within HORDE_GAP of
+// another group (or a big horde within BIG_HORDE_GAP), and only one big horde is ever around.
+const HORDE_GAP = 30 * TILE, BIG_HORDE_GAP = 60 * TILE, ZOMBIE_GAP = 7 * TILE, BIG_HORDE = 5;
 
 // ---- Zombie outfits: each zombie's clothes get their own colours ----
 // Muted, dirty colours so they still read as worn clothing.
@@ -734,6 +737,27 @@ function pickHordeSize() {
   for (const h of HORDES) { r -= h.weight; if (r <= 0) return h.min + Math.floor(Math.random() * (h.max - h.min + 1)); }
   return 1;
 }
+// Where each group is (the middle of its members) and how big it is.
+function groupCenters() {
+  const g = new Map();
+  for (const z of zombies) {
+    if (z.dead || !z.horde) continue;
+    const c = g.get(z.horde) || { x: 0, y: 0, n: 0 };
+    c.x += z.x; c.y += z.y; c.n++; g.set(z.horde, c);
+  }
+  return [...g.values()].map(c => ({ x: c.x / c.n, y: c.y / c.n, n: c.n }));
+}
+function groupSpaceOk(x, y, size) {
+  // Nobody spawns right on top of other zombies.
+  if (zombies.some(z => !z.dead && Math.hypot(z.x - x, z.y - y) < ZOMBIE_GAP)) return false;
+  if (size === 1) return true;
+  for (const c of groupCenters()) {
+    const big = size >= BIG_HORDE || c.n >= BIG_HORDE;
+    if (size >= BIG_HORDE && c.n >= BIG_HORDE) return false;   // one big horde at a time
+    if (Math.hypot(c.x - x, c.y - y) < (big ? BIG_HORDE_GAP : HORDE_GAP)) return false;
+  }
+  return true;
+}
 // Spawns a lone zombie or a horde out of sight. Bigger hordes appear further away.
 function spawnGroup(size) {
   const minR = size > 4 ? 17 : 13, maxR = size > 4 ? 24 : 19;
@@ -742,6 +766,7 @@ function spawnGroup(size) {
     const cx = player.x + Math.cos(a) * r, cy = player.y + Math.sin(a) * r;
     if (Math.abs(cx - player.x) < BW / 2 + 64 && Math.abs(cy - player.y) < BH / 2 + 112) continue; // never pop in on screen
     if (!canStand(cx, cy)) continue;
+    if (!groupSpaceOk(cx, cy, size)) continue;
     let hid = 0;
     if (size > 1) { hid = nextHordeId++; hordes.set(hid, { id: hid, gx: cx, gy: cy, t: 3 + Math.random() * 6 }); }
     const spread = 14 + Math.sqrt(size) * 14;
@@ -1452,6 +1477,14 @@ function furnRect(b, f) {
   const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2) + odx, bottom = (b.y + f.y + F.h) * TILE + ody;
   return [x, bottom - img.height, x + img.width, bottom];
 }
+// World objects (trees, rocks, camp pieces...) whose base is inside a pixel rect.
+function objectsIn(x0, y0, x1, y1) {
+  const out = [];
+  for (let cy = Math.floor(y0 / CPX); cy <= Math.floor(y1 / CPX); cy++)
+    for (let cx = Math.floor(x0 / CPX); cx <= Math.floor(x1 / CPX); cx++)
+      for (const o of getData(cx, cy).objects) if (o.x >= x0 && o.x <= x1 && o.y >= y0 && o.y <= y1) out.push(o);
+  return out;
+}
 function findNearby() {
   const out = [], px = player.x, py = player.y - 10;
   if (player.swimming || player.jump) return out;
@@ -1474,6 +1507,12 @@ function findNearby() {
       const rect = furnRect(b, f);
       out.push({ type: 'search', b, f, rect, dot: [Math.round((rect[0] + rect[2]) / 2), Math.round((rect[1] + rect[3]) / 2)] });
     }
+  }
+  // Crates at camps (only from outside).
+  if (!pb) for (const o of objectsIn(px - 96, py - 96, px + 96, py + 96)) {
+    const k = KINDS[o.k]; if (!k.crate || !o.camp) continue;
+    const rect = [o.x - k.ax, o.y - k.ay, o.x - k.ax + k.sw, o.y - k.ay + k.sh];
+    out.push({ type: 'search', b: o.camp, f: { i: o.ci, name: k.crate, crate: true }, rect, dot: [Math.round(o.x), Math.round(o.y - k.ay + k.sh / 2)] });
   }
   return out.filter(it => {
     const [x0, y0, x1, y1] = it.rect, f = it.type === 'door' ? 0 : 0;
@@ -1707,7 +1746,14 @@ function renderWorld(camX, camY, withPlayer) {
     if (withPlayer && k.tall && player.y < o.y &&
         rectsHit(pbx0, pby0, pbx0 + 22, player.y, sx + 4, sy, sx + k.sw - 4, o.y - k.ch)) fade = true;
     if (fade) bctx.globalAlpha = 0.45;
-    bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
+    bctx.drawImage(k.img ? IMG[k.img] : IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
+    if (k.fire && o.lit) {
+      // Smoke then flame, at the same origin as the fire ring. They loop on their own clocks:
+      // the flame flickers quickly while the smoke drifts slowly.
+      const smoke = (Math.floor(frameTime / 260) + o.ph) % 4, flame = (Math.floor(frameTime / 110) + o.ph) % 4;
+      bctx.drawImage(IMG.camp, smoke * 64, 192, 64, 64, sx, sy, 64, 64);
+      bctx.drawImage(IMG.camp, flame * 64, 128, 64, 64, sx, sy, 64, 64);
+    }
     if (fade) bctx.globalAlpha = 1;
   }
   if (withPlayer) { renderSwing(); renderInteractDots(); }
@@ -2317,6 +2363,10 @@ const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
   dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['jeans', 0.2], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
+  crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
+  crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05]] },
+  crateL:  { name: 'Large crate', slots: 6, loot: [['beans', 0.45], ['soup', 0.35], ['water', 0.5], ['water', 0.25], ['bandage', 0.2], ['firstaid', 0.06], ['antiseptic', 0.08], ['hatchet', 0.14], ['axe', 0.06], ['wintercoat', 0.08], ['beanie', 0.1], ['utilityvest', 0.05], ['bagM', 0.06], ['bagL', 0.02]] },
   shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['utilityvest', 0.04], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
@@ -2331,8 +2381,9 @@ Object.assign(WEAPONS, {
   hatchet:    { name: 'Hatchet',       reach: 34, arc: 55, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 9,  stun: 0.45, noise: 4 },
   axe:        { name: 'Axe',           reach: 43, arc: 70, damage: [48, 62], cooldown: 1.1,  duration: 0.55, hitAt: 0.3,  knockback: 13, stun: 0.6,  noise: 6, heavy: true },
 });
+function containerType(f) { return f.crate ? f.name : FURN[f.name].container; }
 function rollLoot(b, f) {
-  const C = CONTAINERS[FURN[f.name].container], items = new Array(C.slots).fill(null);
+  const C = CONTAINERS[containerType(f)], items = new Array(C.slots).fill(null);
   const mult = b.cond === 'looted' ? 0.25 : b.cond === 'locked' ? 1.3 : 1;
   let n = 0;
   C.loot.forEach(([key, chance], k) => { if (n < C.slots && hash01(b.seed, f.i * 31 + k, 0x10a7) < chance * mult) items[n++] = makeItem(key); });
@@ -2341,7 +2392,8 @@ function rollLoot(b, f) {
 let container = null;   // { b, f, name, items }
 function openContainer(it) {
   const s = bState(it.b);
-  container = { b: it.b, f: it.f, name: CONTAINERS[FURN[it.f.name].container].name, items: s.c[it.f.i] };
+  container = { b: it.b, f: it.f, name: CONTAINERS[containerType(it.f)].name, items: s.c[it.f.i],
+    px: (it.rect[0] + it.rect[2]) / 2, py: it.rect[3] };
   if (!invOpen) openInventory(); else layoutInventory();
 }
 function closeContainer() { container = null; if (invOpen) layoutInventory(); }
@@ -2550,7 +2602,7 @@ function loop(now) {
       updateCorpses(dt);
       checkResidents();
       updateBanging(dt);
-      if (container && Math.hypot(player.x - ((container.b.x + container.f.x) * TILE + 16), player.y - ((container.b.y + container.f.y) * TILE + 20)) > 64) closeContainer();
+      if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
       playTime += dt;
       updateZombies(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }

@@ -33,9 +33,12 @@ right-click to remove one, C to re-centre.
 - Body-part health: head, torso, each arm, hand, leg and foot. Where a zombie hits you depends on
   where it is relative to the way you're facing. If any part reaches 0%, you die. The top-left bar
   shows your most injured part.
+- Bleeding: below 70% a part bleeds lightly (clots by itself after 30 s unless hit again),
+  below 45% it bleeds steadily, and below 20% it bleeds severely. Bleeding drains that part
+  until treated, leaves a blood trail, shows as drops next to the health bar, and pulses on the body figure.
 - Inventory: body health figure (parts turn red as they're hurt, hover for %), clothing slots
   (helmet, clothes, pants, shoes), primary and secondary weapon, backpack, and 6 storage slots.
-  Backpacks add rows of storage. Drag items between slots; slots only accept the right kind of item.
+  Backpacks add storage: small +3, medium +6, large +12. Drag items between slots; slots only accept the right kind of item.
 - Pixel health bar. Damage tints the screen redder the more you're hurt, and hits shake the camera.
 - 3 save slots, autosave every 2 minutes, permadeath (the save is deleted on death) and a game over screen.
 

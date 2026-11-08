@@ -62,7 +62,7 @@
   <h1>STILL HUMAN</h1>
   <div class="tag">Every world is new. Every death is final.</div>
   <div id="slots"></div>
-  <div class="foot">Build 2026-11-07 21:42</div>
+  <div class="foot">Build 2026-11-07 21:57</div>
 </div>
 
 <div id="pause" class="screen hidden">
@@ -604,7 +604,7 @@ const BODY_PARTS = [
   { id: 'lFoot',  name: 'Left foot',  side: -1, mult: 0.9 },
 ];
 function newPlayer(x, y) {
-  const p = { x, y, dir: 'S', moving: false, running: false, anim: 0, parts: {}, lastHit: null, lastHitT: 0 };
+  const p = { x, y, dir: 'S', moving: false, running: false, anim: 0, parts: {}, wounds: {}, lastHit: null, lastHitT: 0 };
   for (const b of BODY_PARTS) p.parts[b.id] = 100;
   Object.defineProperty(p, 'hp', {
     get() { let m = 100; for (const k in this.parts) m = Math.min(m, this.parts[k]); return m; },
@@ -709,6 +709,7 @@ function hurtPlayer(amount, cause, fromX, fromY) {
   const dmg = amount * part.mult * (0.8 + Math.random() * 0.4);
   player.parts[part.id] = Math.max(0, player.parts[part.id] - dmg);
   player.lastHit = part.id; player.lastHitT = performance.now();
+  player.wounds[part.id] = { t: 0, clotted: false }; // a fresh hit reopens the wound
   hurtFx.shake = 1; hurtFx.flash = 1;
   if (player.parts[part.id] <= 0) startDying(DEATH_BY_PART[part.id] || cause);
 }
@@ -842,6 +843,72 @@ function updateZombies(dt) {
   for (const z of zombies) updateZombie(z, dt);
 }
 
+
+// ---- Bleeding ------------------------------------------------------------------------------------
+// A body part starts bleeding once its health drops below a threshold; the worse the wound, the
+// faster it bleeds (health % lost per second). Light bleeding clots on its own after a while
+// unless the part is hit again; heavier bleeding keeps going until treated (bandages, later).
+const BLEED_LEVELS = [
+  null,
+  { below: 70, rate: 0.25, name: 'Light bleeding', clotsAfter: 30 },
+  { below: 45, rate: 0.8,  name: 'Bleeding' },
+  { below: 20, rate: 1.8,  name: 'Severe bleeding' },
+];
+function bleedLevel(id) {
+  const hp = player.parts[id], w = player.wounds[id];
+  let lvl = 0;
+  for (let i = 1; i < BLEED_LEVELS.length; i++) if (hp < BLEED_LEVELS[i].below) lvl = i;
+  if (lvl === 1 && w && w.clotted) return 0;
+  return lvl;
+}
+function updateBleeding(dt) {
+  if (player.god) return;
+  let total = 0;
+  for (const b of BODY_PARTS) {
+    const lvl = bleedLevel(b.id); if (!lvl) continue;
+    const L = BLEED_LEVELS[lvl];
+    const w = player.wounds[b.id] || (player.wounds[b.id] = { t: 0, clotted: false });
+    w.t += dt;
+    if (L.clotsAfter && w.t >= L.clotsAfter) { w.clotted = true; continue; }
+    player.parts[b.id] = Math.max(0, player.parts[b.id] - L.rate * dt);
+    total += lvl;
+    if (player.parts[b.id] <= 0) { startDying(BLED_OUT[b.id]); return; }
+  }
+  // Blood drips on the ground, faster the more you're bleeding.
+  if (total > 0) {
+    bloodT -= dt * total;
+    if (bloodT <= 0) {
+      bloodT = 0.9 + Math.random() * 0.6;
+      blood.push({ x: player.x + (Math.random() * 10 - 5), y: player.y - 1 - Math.random() * 3, t: performance.now(), s: Math.random() < 0.35 ? 3 : 2 });
+      if (blood.length > 500) blood.shift();
+    }
+  }
+}
+const BLED_OUT = {
+  head: 'You bled out from a head wound.', torso: 'You bled out from wounds to your torso.',
+  rArm: 'You bled out from your right arm.', lArm: 'You bled out from your left arm.',
+  rHand: 'You bled out from your right hand.', lHand: 'You bled out from your left hand.',
+  rLeg: 'You bled out from your right leg.', lLeg: 'You bled out from your left leg.',
+  rFoot: 'You bled out from your right foot.', lFoot: 'You bled out from your left foot.',
+};
+let blood = [], bloodT = 0;
+const BLOOD_LIFE = 60000;
+function renderBlood(camX, camY, now) {
+  for (const b of blood) {
+    const age = (now - b.t) / BLOOD_LIFE; if (age > 1) continue;
+    if (b.x < camX - 4 || b.x > camX + BW + 4 || b.y < camY - 4 || b.y > camY + BH + 4) continue;
+    bctx.globalAlpha = 0.85 * (1 - age * age);
+    bctx.fillStyle = age < 0.05 ? '#9c1b14' : '#6e120e';
+    const bx = Math.round(b.x), by = Math.round(b.y);
+    bctx.fillRect(bx, by, b.s, b.s - 1); bctx.fillRect(bx + 1, by - 1, b.s - 2 || 1, b.s + 1);
+    if (b.s === 3) { bctx.fillRect(bx + 4, by + 1, 1, 1); bctx.fillRect(bx - 2, by, 1, 1); }
+  }
+  bctx.globalAlpha = 1;
+  blood = blood.filter(b => now - b.t < BLOOD_LIFE);
+}
+function worstBleed() { let m = 0; for (const b of BODY_PARTS) m = Math.max(m, bleedLevel(b.id)); return m; }
+const DROP = ['..#..', '.###.', '#####', '#####', '.###.'];
+
 // ---- Dying ---------------------------------------------------------------------------------------
 let deathCause = '';
 function startDying(cause) {
@@ -870,6 +937,7 @@ function renderWorld(camX, camY, withPlayer) {
   const cx1 = Math.floor((camX + BW) / CPX), cy1 = Math.floor((camY + BH) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++)
     bctx.drawImage(getChunkCanvas(cx, cy, true), cx * CPX, cy * CPX);
+  if (withPlayer) renderBlood(camX, camY, frameTime);
   // Pre-build one chunk canvas just outside the view each frame, so walking stays smooth.
   outer: for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++)
     if (!canvasCache.has(ck(cx, cy))) { getChunkCanvas(cx, cy, true); break outer; }
@@ -953,6 +1021,19 @@ function renderHealthBar() {
   if (hurtFx.flash > 0.55) { bctx.fillStyle = 'rgba(255,255,255,0.7)'; bctx.fillRect(bx, by, fw, h); }
   bctx.fillStyle = 'rgba(0,0,0,0.45)';
   for (let i = 1; i < 10; i++) bctx.fillRect(bx + Math.round(w * i / 10), by, 1, h);
+  // Blood drops: one per bleeding body part (up to 3), pulsing faster when it's worse.
+  const bleeding = BODY_PARTS.map(b => bleedLevel(b.id)).filter(Boolean).sort((a, b) => b - a);
+  bleeding.slice(0, 3).forEach((lvl, i) => {
+    const dx = bx + w + 5 + i * 8, period = [0, 900, 550, 300][lvl];
+    const on = Math.floor(frameTime / period) % 2 === 0;
+    const col = lvl === 3 ? (on ? '#ff3b2b' : '#a3150e') : lvl === 2 ? (on ? '#e0392c' : '#8e1a13') : '#b8352a';
+    DROP.forEach((row, r) => { for (let c = 0; c < 5; c++) if (row[c] === '#') {
+      bctx.fillStyle = '#000'; bctx.fillRect(dx + c, by + r + 1, 1, 1);
+    } });
+    DROP.forEach((row, r) => { for (let c = 0; c < 5; c++) if (row[c] === '#') {
+      bctx.fillStyle = (r === 2 && c === 1) ? '#ffb3a6' : col; bctx.fillRect(dx + c, by + r, 1, 1);
+    } });
+  });
 }
 let vignette = null;
 function makeVignette() {
@@ -1113,7 +1194,7 @@ const textWidth = (t, s = 1) => String(t).length * 4 * s - s;
 // ---- Inventory --------------------------------------------------------------------------------
 // The panel art is the mockup itself; the storage row is repeated for each extra row of slots
 // a backpack adds. Slot rectangles below are in the mockup's pixel coordinates.
-const INV_W = 320, INV_BASE_H = 320, INV_ROW_H = 39, INV_ROW_SRC = 267, INV_SPLIT = 306;
+const INV_W = 320, INV_BASE_H = 320, INV_ROW_H = 36, INV_ROW_SRC = 270, INV_SPLIT = 306;
 const INV_COLS = 6, INV_BASE_SLOTS = 6;
 const STORAGE_X = [16, 65, 114, 163, 212, 261], STORAGE_Y = 274, SLOT_W = 43, SLOT_H = 32;
 const EQUIP_SLOTS = {
@@ -1128,6 +1209,13 @@ const EQUIP_SLOTS = {
 const BODY_BOX = { x: 20, y: 68, w: 117, h: 117 };
 const UI_BG = '#151d1e', UI_DARK = '#10181a', UI_TEXT = '#dde4d5', UI_DIM = '#82918a', UI_ACCENT = '#a8bf96', UI_GOLD = '#baab83';
 
+// Backpack sizes: storage slots each one adds when equipped.
+const BACKPACKS = {
+  small:  { name: 'Small backpack',  slots: 3 },
+  medium: { name: 'Medium backpack', slots: 6 },
+  large:  { name: 'Large backpack',  slots: 12 },
+};
+function makeBackpack(size) { const b = BACKPACKS[size]; return { name: b.name, cat: 'backpack', size, slots: b.slots }; }
 function newInventory() {
   return { equip: { helmet: null, clothes: null, pants: null, shoes: null, primary: null, secondary: null, backpack: null },
            storage: new Array(INV_BASE_SLOTS).fill(null) };
@@ -1220,6 +1308,8 @@ function drawBody(g, now) {
     if (isLine) { tr = 236; tg = 98; tb = 78; } else if (d[k] > 40) { tr = 158; tg = 36; tb = 30; } else { tr = 118; tg = 24; tb = 22; }
     d[k] = d[k] + (tr - d[k]) * t; d[k + 1] = d[k + 1] + (tg - d[k + 1]) * t; d[k + 2] = d[k + 2] + (tb - d[k + 2]) * t;
     const hover = invHover && invHover.part === part;
+    const bl = bleedLevel(part.id);
+    if (bl && isLine && Math.floor(now / [0, 900, 550, 300][bl]) % 2 === 0) { d[k] = 255; d[k + 1] = 60; d[k + 2] = 45; }
     if ((blink && part.id === player.lastHit) || hover) {
       if (isLine) { d[k] = 255; d[k + 1] = 255; d[k + 2] = 230; }
       else { d[k] = Math.min(255, d[k] + 30); d[k + 1] = Math.min(255, d[k + 1] + 30); d[k + 2] = Math.min(255, d[k + 2] + 30); }
@@ -1292,9 +1382,10 @@ function renderInventory(now) {
   const show = part || (player.lastHit && now - player.lastHitT < 2500 ? BODY_PARTS.find(b => b.id === player.lastHit) : null);
   g.fillStyle = UI_DARK; g.fillRect(BODY_BOX.x + 10, 177, 97, 7);
   if (show) {
-    const v = Math.ceil(player.parts[show.id]);
-    const t = `${show.name} ${v}%`;
-    pixelText(g, t, BODY_BOX.x + 58 - Math.floor(textWidth(t) / 2), 178, v > 60 ? UI_ACCENT : v > 30 ? '#e0b45a' : '#e8644f');
+    const v = Math.ceil(player.parts[show.id]), bl = bleedLevel(show.id);
+    const alt = bl && Math.floor(now / 1100) % 2 === 1;
+    const t = alt ? BLEED_LEVELS[bl].name : `${show.name} ${v}%`;
+    pixelText(g, t, BODY_BOX.x + 58 - Math.floor(textWidth(t) / 2), 178, alt ? '#ff5a45' : v > 60 ? UI_ACCENT : v > 30 ? '#e0b45a' : '#e8644f');
   }
   // Hovered item name, or a message.
   let tip = invMsg && now < invMsg.until ? invMsg.t : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? getItem(invHover.slot).name : null);
@@ -1432,6 +1523,7 @@ function startPlaying() {
   state = 'play';
   lastAutosave = performance.now();
   hurtFx.shake = 0; hurtFx.flash = 0; hurtFx.deathT = 0; hurtFx.lagHp = player.hp;
+  blood = []; bloodT = 0;
   revealAround(player.x, player.y);
 }
 function newGame(n) {
@@ -1454,6 +1546,7 @@ function loadGame(n) {
   markers = s.markers || []; playTime = s.playTime || 0; created = s.created || Date.now();
   if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
   else player.hp = s.player.hp ?? MAX_HP;
+  player.wounds = s.player.wounds || {};
   zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; if (z.look != null) o.look = z.look; return o; });
   zSpawnT = 8;
   inv = newInventory();
@@ -1466,7 +1559,7 @@ function saveGame() {
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
-    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts },
+    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
     zombies: zombies.map(z => ({ t: z.type, look: z.look, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     inv, explored: ex, markers,
   }));
@@ -1497,6 +1590,7 @@ function loop(now) {
       if (state === 'play') updatePlayer(dt);
       playTime += dt;
       updateZombies(dt);
+      if (state === 'play' || state === 'map') updateBleeding(dt);
       revealT -= dt;
       if (revealT <= 0) { revealAround(player.x, player.y); revealT = 0.2; }
       if (now - lastAutosave > 120000) saveGame();
@@ -1551,7 +1645,7 @@ loadImages().then(() => {
 
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
-  giveItem, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
+  giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
   spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();
 

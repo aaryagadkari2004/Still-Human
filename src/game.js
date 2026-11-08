@@ -1426,7 +1426,6 @@ const NOISE = {
   break: 13,      // a door or window giving way
 };
 const MUFFLE = 0.55;          // walls cut sound to about half
-let noiseRings = [];
 function makeNoise(x, y, tiles, fromPlayer) {
   const src = buildingAt(x, y - 4);
   for (const z of zombies) {
@@ -1439,7 +1438,6 @@ function makeNoise(x, y, tiles, fromPlayer) {
     z.mode = 'investigate'; z.lostT = 0; z.t = 0;
     z.gx = x + (Math.random() * 2 - 1) * err; z.gy = y + (Math.random() * 2 - 1) * err;
   }
-  if (fromPlayer) noiseRings.push({ x, y, r: tiles * TILE, t: 0 });
 }
 let stepNoiseT = 0;
 function updatePlayerNoise(dt) {
@@ -1447,15 +1445,6 @@ function updatePlayerNoise(dt) {
   if (!player.moving || stepNoiseT > 0) return;
   if (player.running) { makeNoise(player.x, player.y, NOISE.run, true); stepNoiseT = 0.45; }
   else { makeNoise(player.x, player.y, NOISE.walk, true); stepNoiseT = 0.7; }
-}
-function renderNoiseRings(dt) {
-  for (const n of noiseRings) {
-    n.t += dt;
-    const p = Math.min(1, n.t / 0.7);
-    bctx.strokeStyle = `rgba(235,225,190,${0.22 * (1 - p)})`; bctx.lineWidth = 1;
-    bctx.beginPath(); bctx.ellipse(Math.round(n.x), Math.round(n.y - 2), n.r * (0.25 + 0.75 * p), n.r * (0.25 + 0.75 * p) * 0.55, 0, 0, Math.PI * 2); bctx.stroke();
-  }
-  noiseRings = noiseRings.filter(n => n.t < 0.7);
 }
 // Can a zombie outside see into the player's house? Only through a window or an open doorway
 // close to the player, and only from the outside of that opening.
@@ -1559,7 +1548,7 @@ function renderWorld(camX, camY, withPlayer) {
     bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (fade) bctx.globalAlpha = 1;
   }
-  if (withPlayer) { renderSwing(); renderNoiseRings(1 / 60); renderInteractPrompt(camX, camY); }
+  if (withPlayer) { renderSwing(); renderInteractPrompt(camX, camY); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
   if (withPlayer) renderInsideDarkness(camX, camY);
 }

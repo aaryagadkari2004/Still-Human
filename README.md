@@ -40,8 +40,7 @@ right-click to remove one, C to re-centre.
   notice you from any side) and can see into houses through windows and open doors near you. Noise
   draws them over to investigate: footsteps 2.5 tiles, running 7, fighting 4, searching 6, doors 8,
   zombies banging on a door 10, a door or window breaking 13. Walls cut sound by about half. If
-  they lose sight of you and hear nothing, they give up. A faint ring shows how far your noise
-  carries.
+  they lose sight of you and hear nothing, they give up.
 - Zombie speed varies: 70% normal, 18% slower, 10% faster (up to your walking speed), and a rare 2%
   sprint up to your full running speed.
 - Fist fighting: click to punch toward the mouse. Fists only reach about a metre and hit within a

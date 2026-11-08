@@ -40,6 +40,7 @@ const ICONS = {
   // Headwear icons come from the front-facing frame of the worn sprite, at 2x.
   beanie: ['wearBeanie', 0, 0, 2, 64], bikehelmet: ['wearBike', 0, 0, 2, 64], hardhat: ['wearHardhat', 0, 0, 2, 64],
   motohelmet: ['wearMoto', 0, 0, 2, 64], militaryhelmet: ['wearMilitary', 0, 0, 2, 64],
+  hoodie: ['wearHoodie', 0, 0, 1, 64], leatherjacket: ['wearLeather', 0, 0, 1, 64], wintercoat: ['wearCoat', 0, 0, 1, 64], utilityvest: ['wearVest', 0, 0, 1, 64],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -1534,7 +1535,7 @@ function renderWorld(camX, camY, withPlayer) {
       const [fx, fy] = playerFrame(player);
       bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
       // Worn gear is drawn on top, frame for frame.
-      for (const slot of ['helmet']) {
+      for (const slot of ['clothes', 'helmet']) {
         const it = inv.equip[slot], def = it && (ITEMS[it.key] || it);
         if (def && def.wear && IMG[def.wear]) bctx.drawImage(IMG[def.wear], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
       }
@@ -1843,7 +1844,11 @@ const invCanvas = document.getElementById('inventory');
 const ictx = invCanvas.getContext('2d');
 let invScale = 2, invHover = null, invDrag = null, invMsg = null;
 
-function storageSize() { return INV_BASE_SLOTS + (inv.equip.backpack ? (inv.equip.backpack.slots || 0) : 0); }
+function extraSlots(equip) {
+  const pk = equip.clothes && (ITEMS[equip.clothes.key] || equip.clothes).pockets || 0;
+  return (equip.backpack ? (equip.backpack.slots || 0) : 0) + pk;
+}
+function storageSize() { return INV_BASE_SLOTS + extraSlots(inv.equip); }
 function invRows() { return Math.ceil(storageSize() / INV_COLS); }
 function invHeight() { return INV_BASE_H + (invRows() - 1) * INV_ROW_H; }
 function fitStorage() {
@@ -1881,15 +1886,15 @@ function moveItem(from, to) {
   if (from.kind === to.kind && from.id === to.id && from.i === to.i) return;
   const a = getItem(from), b = getItem(to);
   if (!accepts(to, a) || !accepts(from, b)) { flashMsg("That doesn't go there"); return; }
-  // A backpack can only come off when the slots it adds are empty.
-  for (const [ref, item] of [[from, b], [to, a]]) {
-    if (ref.kind === 'equip' && ref.id === 'backpack') {
-      const cur = inv.equip.backpack, next = item;
-      const curN = INV_BASE_SLOTS + (cur ? cur.slots || 0 : 0), nextN = INV_BASE_SLOTS + (next ? next.slots || 0 : 0);
-      const target = to.kind === 'storage' ? to.i : from.kind === 'storage' ? from.i : -1;
-      for (let i = nextN; i < curN; i++) if (inv.storage[i] && i !== target) { flashMsg('Empty the backpack first'); return; }
-      if (target >= nextN) { flashMsg('Empty the backpack first'); return; }
-    }
+  // Backpacks and pocketed clothes can only come off when the slots they add are empty.
+  if (from.kind === 'equip' || to.kind === 'equip') {
+    const after = { ...inv.equip };
+    if (from.kind === 'equip') after[from.id] = b;
+    if (to.kind === 'equip') after[to.id] = a;
+    const curN = storageSize(), nextN = INV_BASE_SLOTS + extraSlots(after);
+    const target = to.kind === 'storage' ? to.i : from.kind === 'storage' ? from.i : -1;
+    if (target >= nextN) { flashMsg('Empty those slots first'); return; }
+    for (let i = nextN; i < curN; i++) if (inv.storage[i] && i !== target) { flashMsg('Empty those slots first'); return; }
   }
   setItem(from, b); setItem(to, a);
   fitStorage();
@@ -2003,7 +2008,13 @@ function renderContainerPanel(g, H) {
 }
 function itemLabel(it) {
   const def = ITEMS[it.key] || it;
-  if (def.protect) { const [p, v] = Object.entries(def.protect)[0]; return `${def.name} - ${BODY_PARTS.find(b => b.id === p).name} +${Math.round(v * 100)}%`; }
+  if (def.protect) {
+    const pr = def.protect, parts = [];
+    if (pr.head) parts.push(`head +${Math.round(pr.head * 100)}%`);
+    if (pr.rArm) parts.push(`arms +${Math.round(pr.rArm * 100)}%`);
+    if (pr.torso) parts.push(`torso +${Math.round(pr.torso * 100)}%`);
+    return `${def.name} - ${parts.join(' ')}${def.pockets ? ` +${def.pockets} slots` : ''}`;
+  }
   if (def.weapon && WEAPONS[def.weapon]) return def.name;
   return def.name;
 }
@@ -2062,7 +2073,9 @@ function renderInventory(now) {
 }
 function layoutInventory() {
   const H = invHeight(), Wt = INV_W + invOX();
-  invScale = Math.max(1, Math.floor(Math.min(window.innerWidth * 0.94 / Wt, window.innerHeight * 0.94 / H)));
+  // Whole-number scaling keeps pixels crisp; below 2x allow quarter steps so it never gets tiny.
+  const fit = Math.min(window.innerWidth * 0.94 / Wt, window.innerHeight * 0.94 / H);
+  invScale = fit >= 2 ? Math.floor(fit) : Math.max(1, Math.floor(fit * 4) / 4);
   invCanvas.style.width = Wt * invScale + 'px';
   invCanvas.style.height = H * invScale + 'px';
 }
@@ -2137,7 +2150,11 @@ const ITEMS = {
   militaryhelmet: { name: 'Military helmet', cat: 'helmet', abbr: 'MIL', wear: 'wearMilitary', protect: { head: 0.5 } },
   motohelmet:     { name: 'Motorcycle helmet', cat: 'helmet', abbr: 'MOT', wear: 'wearMoto', protect: { head: 0.6 } },
   flannel:  { name: 'Flannel shirt', cat: 'clothes', abbr: 'SHT' },
-  hoodie:   { name: 'Hoodie', cat: 'clothes', abbr: 'HOD' },
+  // Tops. protect covers the torso and both arms; pockets add storage slots while worn.
+  hoodie:        { name: 'Hoodie', cat: 'clothes', abbr: 'HOD', wear: 'wearHoodie', protect: { torso: 0.1, rArm: 0.1, lArm: 0.1 } },
+  leatherjacket: { name: 'Leather jacket', cat: 'clothes', abbr: 'LTH', wear: 'wearLeather', protect: { torso: 0.3, rArm: 0.35, lArm: 0.35 } },
+  wintercoat:    { name: 'Winter coat', cat: 'clothes', abbr: 'CT', wear: 'wearCoat', protect: { torso: 0.2, rArm: 0.2, lArm: 0.2 } },
+  utilityvest:   { name: 'Utility vest', cat: 'clothes', abbr: 'VST', wear: 'wearVest', protect: { torso: 0.15 }, pockets: 2 },
   jeans:    { name: 'Jeans', cat: 'pants', abbr: 'JNS' },
   boots:    { name: 'Work boots', cat: 'shoes', abbr: 'BTS' },
   bagS:     { name: 'Small backpack', cat: 'backpack', abbr: 'BG3', slots: 3 },
@@ -2149,8 +2166,8 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['jeans', 0.2], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['utilityvest', 0.04], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
 // cooldown = seconds between swings, noise in tiles.
@@ -2195,7 +2212,7 @@ function treat(item, part) {
   return true;
 }
 // Clothes can be torn into rags.
-const TEARABLE = { flannel: 2, hoodie: 2, jeans: 2, beanie: 1 };
+const TEARABLE = { flannel: 2, hoodie: 2, jeans: 2, beanie: 1, wintercoat: 3 };
 function useItem(ref, part) {
   const item = getItem(ref); if (!item) return;
   if (item.use === 'medical') {

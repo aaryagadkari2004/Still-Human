@@ -11,6 +11,7 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | --- | --- |
 | WASD / arrows | Move |
 | Shift | Run |
+| Left click | Attack toward the mouse (hold to keep swinging) |
 | I / Tab | Open / close the inventory (the game keeps running) |
 | M | Open / close the map |
 | Esc | Pause (save, quit to menu) |
@@ -30,7 +31,11 @@ right-click to remove one, C to re-centre.
 - Minimap and full map that only show explored areas, plus map markers.
 - Walker zombies (5 looks): wander, notice you within about 8 tiles, chase more slowly than you walk,
   lose interest when they lose sight of you, and lunge to attack.
-- Zombie speed varies: 70% normal, 18% slower, 12% faster (never faster than you walk).
+- Zombie speed varies: 70% normal, 18% slower, 10% faster (up to your walking speed), and a rare 2%
+  sprint up to your full running speed.
+- Fist fighting: click to punch toward the mouse. Fists only reach about a metre and hit within a
+  ~110° arc. Each punch does 9-14 damage (zombies have 100), staggers the zombie, interrupts its
+  attack and knocks it back a little. Weapons will plug into the same system.
 - Every zombie gets its own clothing colours (top and bottom; dresses are one colour). Skin, hair,
   eyes, blood and shoes keep the original art.
 - Hordes: lone zombies are most common (55%), then groups of 2-4 (28%), hordes of 5-8 (12%) and

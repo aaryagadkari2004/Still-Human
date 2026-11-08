@@ -284,9 +284,11 @@ function updatePlayer(dt) {
   p.moving = vx !== 0 || vy !== 0;
   p.running = p.moving && keys.has('shift');
   if (p.moving) {
-    const len = Math.hypot(vx, vy), sp = (p.running ? RUN : WALK) * dt;
+    if (p.attack) p.running = false;
+    const len = Math.hypot(vx, vy), sp = (p.running ? RUN : WALK) * dt * (p.attack ? 0.5 : 1);
     const mx = vx / len * sp, my = vy / len * sp;
-    if (Math.abs(vx) > Math.abs(vy)) p.dir = vx > 0 ? 'E' : 'W';
+    if (p.attack) { /* keep facing the punch */ }
+    else if (Math.abs(vx) > Math.abs(vy)) p.dir = vx > 0 ? 'E' : 'W';
     else if (Math.abs(vy) > Math.abs(vx)) p.dir = vy > 0 ? 'S' : 'N';
     else if (!((vx > 0 && p.dir === 'E') || (vx < 0 && p.dir === 'W') || (vy > 0 && p.dir === 'S') || (vy < 0 && p.dir === 'N'))) p.dir = vx > 0 ? 'E' : 'W';
     if (!feetBlocked(p.x + mx, p.y)) p.x += mx;
@@ -297,6 +299,7 @@ function updatePlayer(dt) {
   }
 }
 function playerFrame(p) {
+  if (p.attack) return [Math.min(3, Math.floor(p.attack.t / p.attack.w.duration * 4)), PUNCH_ROW[p.dir]];
   const f = Math.floor(p.anim) % 4;
   return [f, p.moving ? DIR_ROW[p.dir] : IDLE_ROW[p.dir]];
 }
@@ -371,23 +374,24 @@ const ZOMBIE_TYPES = {
   walker: {
     looks: [{ img: 'zWalker' }, { img: 'zWalker2' }, { img: 'zWalker3' }, { img: 'zWalker4', onePiece: true }, { img: 'zWalker5' }],
     speed: 46, wanderSpeed: 18, hp: 100,
-    damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
+    damage: 14, reach: 27, windup: 0.45, cooldown: 1.4,
     sight: 10 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
   },
 };
 // Speed varies per zombie: most shamble at the normal pace, some are slower,
-// a few are faster — but never faster than the player walks.
+// a few are faster, and rare sprinters can match the player's full sprint.
 const Z_SPEEDS = [
   { weight: 70, min: 0.95, max: 1.05 },   // normal
   { weight: 18, min: 0.65, max: 0.85 },   // slow
-  { weight: 12, min: 1.2,  max: WALK / 46 }, // fast (up to walking pace)
+  { weight: 10, min: 1.2,  max: WALK / 46 }, // fast (up to walking pace)
+  { weight: 2,  min: 2.2,  max: RUN / 46 },  // rare sprinters (up to the player's sprint)
 ];
 function rollSpeed() {
   let r = Math.random() * Z_SPEEDS.reduce((a, b) => a + b.weight, 0);
   for (const b of Z_SPEEDS) { r -= b.weight; if (r <= 0) return b.min + Math.random() * (b.max - b.min); }
   return 1;
 }
-function zSpeed(z, T) { return Math.min(WALK, T.speed * z.speedMul); }
+function zSpeed(z, T) { return Math.min(RUN, T.speed * z.speedMul); }
 const Z_CAP = 36;             // most zombies around the player at once
 const Z_DESPAWN = 46 * TILE;  // zombies further than this are removed
 
@@ -473,7 +477,7 @@ function moveZombie(z, vx, vy, speed, dt) {
     if (feetBlocked(nx, ny)) return false;
     if (Math.hypot(nx - player.x, ny - player.y) < 20) return false;          // don't walk into the player
     for (const o of zombies) {
-      if (o === z || Math.abs(nx - o.x) > 14 || Math.abs(ny - o.y) > 14) continue;
+      if (o === z || o.dead || Math.abs(nx - o.x) > 14 || Math.abs(ny - o.y) > 14) continue;
       if (Math.hypot(nx - o.x, ny - o.y) < 13 && Math.hypot(z.x - o.x, z.y - o.y) >= 13) return false;
     }
     return true;
@@ -493,7 +497,7 @@ function moveZombie(z, vx, vy, speed, dt) {
 // One zombie spotting you sets off the rest of its horde (and any zombie close by).
 function alertAround(z) {
   for (const o of zombies) {
-    if (o === z || o.mode === 'chase' || o.mode === 'attack') continue;
+    if (o === z || o.dead || o.mode === 'chase' || o.mode === 'attack') continue;
     const sameHorde = z.horde && o.horde === z.horde;
     if (sameHorde || Math.hypot(o.x - z.x, o.y - z.y) < 5 * TILE) {
       o.mode = 'chase'; o.lostT = 0; o.gx = player.x; o.gy = player.y;
@@ -506,6 +510,9 @@ function updateZombie(z, dt) {
   const alive = player.hp > 0;
   const sees = alive && d < T.sight;
   z.cd = Math.max(0, z.cd - dt);
+  if (z.flash > 0) z.flash -= dt;
+  if (z.dead) { z.deadT += dt; return; }
+  if (z.stun > 0) { z.stun -= dt; z.moving = false; return; }
 
   if (z.mode === 'attack') {
     z.moving = false; faceToward(z, ddx, ddy);
@@ -609,7 +616,7 @@ function updateHordes(dt) {
   }
 }
 function updateZombies(dt) {
-  zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN);
+  zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN && !(z.dead && z.deadT > 0.9));
   const alive = new Set(zombies.map(z => z.horde));
   for (const id of hordes.keys()) if (!alive.has(id)) hordes.delete(id);
   zSpawnT -= dt;
@@ -698,6 +705,74 @@ function startDying(cause) {
   ui.hint.classList.add('hidden');
 }
 
+// ---- Combat -----------------------------------------------------------------------------------
+// Click to attack toward the mouse. Each weapon sets how far it reaches, how wide its swing is,
+// damage, speed, and how hard it knocks zombies back. Only fists exist so far; an equipped
+// weapon's stats (item.weapon) will be used once weapons are added.
+const WEAPONS = {
+  fist: { name: 'Fists', reach: 30, arc: 55, damage: [9, 14], cooldown: 0.42, duration: 0.36, hitAt: 0.18,
+          knockback: 7, stun: 0.35 },
+};
+const PUNCH_ROW = { S: 8, E: 9, N: 10, W: 11 };
+function currentWeapon() {
+  const w = inv.equip.primary && inv.equip.primary.weapon;
+  return (w && WEAPONS[w]) || WEAPONS.fist;
+}
+const mouse = { x: 0, y: 0, down: false };
+let camWorldX = 0, camWorldY = 0;
+function mouseWorld() { return [camWorldX + mouse.x / scale, camWorldY + mouse.y / scale]; }
+function aimDir(dx, dy) { return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N'); }
+function startAttack() {
+  const p = player;
+  if (p.attack || p.attackCd > 0) return;
+  const [wx, wy] = mouseWorld();
+  // Aim from the player's chest, not their feet.
+  const ax = wx - p.x, ay = wy - (p.y - 22);
+  p.attack = { t: 0, ang: Math.atan2(ay, ax), hit: false, w: currentWeapon() };
+  p.dir = aimDir(ax, ay);
+}
+function updateAttack(dt) {
+  const p = player;
+  p.attackCd = Math.max(0, (p.attackCd || 0) - dt);
+  if (!p.attack) { if (mouse.down && !invOpen) startAttack(); return; }
+  const a = p.attack, W = a.w;
+  a.t += dt;
+  if (!a.hit && a.t >= W.hitAt) {
+    a.hit = true;
+    // Hit the closest zombie inside the weapon's reach and swing arc.
+    let best = null, bd = Infinity;
+    for (const z of zombies) {
+      if (z.dead) continue;
+      const dx = z.x - p.x, dy = z.y - p.y, d = Math.hypot(dx, dy);
+      if (d > W.reach + 8) continue;
+      let da = Math.abs(Math.atan2(dy, dx) - a.ang); if (da > Math.PI) da = Math.PI * 2 - da;
+      if (da > W.arc * Math.PI / 180 && d > 12) continue;
+      if (d < bd) { bd = d; best = z; }
+    }
+    if (best) hitZombie(best, W, a.ang);
+  }
+  if (a.t >= W.duration) { p.attack = null; p.attackCd = W.cooldown - W.duration; }
+}
+function hitZombie(z, W, ang) {
+  const dmg = W.damage[0] + Math.random() * (W.damage[1] - W.damage[0]);
+  z.hp -= dmg; z.flash = 0.12;
+  // A hit staggers the zombie, interrupts its attack and knocks it back a little.
+  z.stun = W.stun;
+  if (z.mode === 'attack') { z.mode = 'chase'; z.cd = Math.max(z.cd, 0.5); }
+  const kx = Math.cos(ang) * W.knockback, ky = Math.sin(ang) * W.knockback;
+  if (!feetBlocked(z.x + kx, z.y)) z.x += kx;
+  if (!feetBlocked(z.x, z.y + ky)) z.y += ky;
+  if (z.mode !== 'chase') { z.mode = 'chase'; z.gx = player.x; z.gy = player.y; z.lostT = 0; alertAround(z); }
+  for (let i = 0; i < 3; i++) blood.push({ x: z.x + (Math.random() * 12 - 6), y: z.y - 1 - Math.random() * 5, t: performance.now(), s: Math.random() < 0.5 ? 3 : 2 });
+  if (z.hp <= 0) {
+    z.dead = true; z.deadT = 0; z.moving = false;
+    for (let i = 0; i < 9; i++) blood.push({ x: z.x + (Math.random() * 22 - 11), y: z.y - 2 + Math.random() * 6, t: performance.now(), s: 3 });
+  }
+}
+canvas.addEventListener('mousedown', e => { if (e.button === 0 && state === 'play' && !invOpen) { mouse.down = true; mouse.x = e.clientX; mouse.y = e.clientY; if (player) startAttack(); } });
+window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
+window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
 // ---- World rendering ---------------------------------------------------------------------------
 let frameTime = 0;
 function drawShadow(x, y, rx, ry) {
@@ -757,7 +832,20 @@ function renderWorld(camX, camY, withPlayer) {
       // Lunge forward slightly at the end of an attack.
       let lx = 0, ly = 0;
       if (o.z.mode === 'attack' && o.z.atk < 0.15) { const v = { N: [0, -3], S: [0, 3], E: [3, 0], W: [-3, 0] }[o.z.dir]; lx = v[0]; ly = v[1]; }
-      bctx.drawImage(zombieSheet(o.z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
+      const z = o.z;
+      if (z.dead) {
+        // No death animation yet: the body sinks and fades into the ground.
+        const t = Math.min(1, z.deadT / 0.9);
+        bctx.save(); bctx.globalAlpha = 1 - t;
+        bctx.beginPath(); bctx.rect(o.x - P_AX - 4, o.y - P_AY - 4, PF + 8, P_AY + 4); bctx.clip();
+        bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY + t * 18), PF, PF);
+        bctx.restore();
+        continue;
+      }
+      if (z.stun > 0) { const v = { N: [0, 2], S: [0, -2], E: [-2, 0], W: [2, 0] }[z.dir]; lx += v[0]; ly += v[1]; }
+      if (z.flash > 0) bctx.filter = 'brightness(2.4) saturate(0.3)';
+      bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
+      if (z.flash > 0) bctx.filter = 'none';
       continue;
     }
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
@@ -1346,7 +1434,7 @@ function saveGame() {
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
-    zombies: zombies.map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     inv, explored: ex, markers,
   }));
   lastAutosave = performance.now();
@@ -1373,7 +1461,7 @@ function loop(now) {
     renderWorld(Math.round(menuCam.x), Math.round(menuCam.y), false);
   } else if (player) {
     if (state === 'play' || state === 'map') {
-      if (state === 'play') updatePlayer(dt);
+      if (state === 'play') { updatePlayer(dt); updateAttack(dt); }
       playTime += dt;
       updateZombies(dt);
       if (state === 'play' || state === 'map') updateBleeding(dt);
@@ -1392,6 +1480,7 @@ function loop(now) {
     else {
       const [sx, sy] = shakeOffset();
       const camX = Math.round(player.x - BW / 2) + sx, camY = Math.round(player.y - 24 - BH / 2) + sy;
+      camWorldX = camX; camWorldY = camY;
       renderWorld(camX, camY, true);
       unloadFarChunks(camX, camY);
     }
@@ -1433,6 +1522,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  spawnGroup, get hordes() { return hordes; },
+  startAttack, mouse, spawnGroup, get hordes() { return hordes; },
   spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

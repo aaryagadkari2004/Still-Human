@@ -10,7 +10,7 @@
   body { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: #d9d4b4; user-select: none; }
   #game { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; }
   .hidden { display: none !important; }
-  #game { transition: filter 0.2s; }
+  #game { transition: filter 0.2s; cursor: crosshair; }
   #game.blurred { filter: blur(3px) brightness(0.75); }
   #inventory { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); image-rendering: pixelated; box-shadow: 0 0 0 1px #000, 8px 8px 0 rgba(0,0,0,0.6); cursor: default; }
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
@@ -84,7 +84,7 @@
   </div>
 </div>
 
-<div id="hint" class="hidden"><b>WASD</b> move · <b>Shift</b> run · <b>M</b> map · <b>I</b> inventory · <b>Esc</b> pause</div>
+<div id="hint" class="hidden"><b>WASD</b> move · <b>Shift</b> run · <b>Click</b> attack · <b>M</b> map · <b>I</b> inventory · <b>Esc</b> pause</div>
 
 <div id="maphelp" class="hidden">
   <span><b>Drag</b> pan</span><span><b>Wheel</b> zoom</span>

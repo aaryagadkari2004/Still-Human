@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Game name for each image -> file in assets/. Swap a file here to update art.
 ASSETS = {
-    "player": "player_v3.png",
+    "player": "player_v4.png",
     "grass": "grass_v2.png",
     "ground": "ground_v1.png",
     "edgeWater": "edge_water_v1.png",

@@ -35,6 +35,9 @@ let waterPatterns = [];
 const ICONS = {
   beans: ['itemsFood', 0, 0], soup: ['itemsFood', 1, 0], water: ['itemsFood', 2, 0], soda: ['itemsFood', 3, 0],
   juice: ['itemsFood', 0, 1], chips: ['itemsFood', 1, 1], bread: ['itemsFood', 2, 1],
+  // Weapon icons are drawn small on their sheet, so they're shown at 2x.
+  knife: ['itemsMelee', 0, 0, 2], hatchet: ['itemsMelee', 1, 0, 2], axe: ['itemsMelee', 2, 0, 2], pipe: ['itemsMelee', 3, 0, 2],
+  bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
 const iconCache = {};
 function iconFor(key) {
@@ -45,8 +48,10 @@ function iconFor(key) {
   const d = g.getImageData(0, 0, 32, 32).data; let x0 = 32, y0 = 32, x1 = -1, y1 = -1;
   for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) if (d[(y * 32 + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
   if (x1 < 0) return (iconCache[key] = null);
-  const out = document.createElement('canvas'); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
-  out.getContext('2d').drawImage(t, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  const sc = def[3] || 1, w = x1 - x0 + 1, h = y1 - y0 + 1;
+  const out = document.createElement('canvas'); out.width = w * sc; out.height = h * sc;
+  const og = out.getContext('2d'); og.imageSmoothingEnabled = false;
+  og.drawImage(t, x0, y0, w, h, 0, 0, w * sc, h * sc);
   return (iconCache[key] = out);
 }
 function prepareAssets() {
@@ -304,7 +309,7 @@ function updatePlayer(dt) {
   p.running = p.moving && keys.has('shift');
   if (p.moving) {
     if (p.attack) p.running = false;
-    const len = Math.hypot(vx, vy), sp = (p.running ? RUN : WALK) * dt * (p.attack ? 0.5 : 1);
+    const len = Math.hypot(vx, vy), sp = (p.running ? RUN : WALK) * dt * (p.attack ? (p.attack.w.heavy ? 0.3 : 0.5) : 1);
     const mx = vx / len * sp, my = vy / len * sp;
     if (p.attack) { /* keep facing the punch */ }
     else if (Math.abs(vx) > Math.abs(vy)) p.dir = vx > 0 ? 'E' : 'W';
@@ -819,9 +824,20 @@ function updateAttack(dt) {
       if (da > W.arc * Math.PI / 180 && d > 12) continue;
       if (d < bd) { bd = d; best = z; }
     }
-    if (best) { hitZombie(best, W, a.ang); makeNoise(p.x, p.y, NOISE.punch, true); }
+    if (best) { hitZombie(best, W, a.ang); makeNoise(p.x, p.y, W.noise || NOISE.punch, true); }
   }
   if (a.t >= W.duration) { p.attack = null; p.attackCd = W.cooldown - W.duration; }
+}
+// A faint streak shows a weapon's swing (fists just use the punch animation).
+function renderSwing() {
+  const a = player.attack; if (!a || a.w === WEAPONS.fist) return;
+  const W = a.w, t = a.t / W.duration;
+  if (t < 0.2 || t > 0.8) return;
+  const p = (t - 0.2) / 0.6, arc = W.arc * Math.PI / 180;
+  const a0 = a.ang - arc, a1 = a0 + arc * 2 * p;
+  bctx.strokeStyle = `rgba(240,235,215,${0.35 * (1 - Math.abs(p - 0.5) * 1.4)})`; bctx.lineWidth = 2;
+  bctx.beginPath(); bctx.ellipse(Math.round(player.x), Math.round(player.y - 22), W.reach * 0.8, W.reach * 0.6, 0, a0, a1); bctx.stroke();
+  bctx.lineWidth = 1;
 }
 function hitZombie(z, W, ang) {
   const dmg = W.damage[0] + Math.random() * (W.damage[1] - W.damage[0]);
@@ -1542,7 +1558,7 @@ function renderWorld(camX, camY, withPlayer) {
     bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (fade) bctx.globalAlpha = 1;
   }
-  if (withPlayer) { renderNoiseRings(1 / 60); renderInteractPrompt(camX, camY); }
+  if (withPlayer) { renderSwing(); renderNoiseRings(1 / 60); renderInteractPrompt(camX, camY); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
   if (withPlayer) renderInsideDarkness(camX, camY);
 }
@@ -1924,8 +1940,10 @@ const CAT_ABBR = { helmet: 'HLM', clothes: 'TOP', pants: 'PNT', shoes: 'SHO', we
 function drawItemIcon(g, item, cx, cy, maxW, maxH) {
   const img = iconFor(item.key) || (item.icon && IMG[item.icon]);
   if (img) {
-    const s = Math.max(1, Math.floor(Math.min(maxW / img.width, maxH / img.height)));
-    g.drawImage(img, Math.round(cx - img.width * s / 2), Math.round(cy - img.height * s / 2), img.width * s, img.height * s);
+    // Icons keep their pixel size; only something too big for the slot is shrunk to fit.
+    const s = Math.min(1, maxW / img.width, maxH / img.height);
+    const w = Math.round(img.width * s), h = Math.round(img.height * s);
+    g.drawImage(img, Math.round(cx - w / 2), Math.round(cy - h / 2), w, h);
   } else {
     // Placeholder until the item has art.
     g.fillStyle = '#2c3a37'; g.fillRect(cx - 13, cy - 8, 26, 16);
@@ -2091,7 +2109,13 @@ const ITEMS = {
   soda:     { name: 'Soda', cat: 'misc', abbr: 'POP', use: 'eat', food: 4, drink: 20 },
   juice:    { name: 'Juice carton', cat: 'misc', abbr: 'JUC', use: 'eat', food: 6, drink: 26 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
-  hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'AXE', weapon: 'hatchet' },
+  hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'HAT', weapon: 'hatchet' },
+  axe:      { name: 'Axe', cat: 'weapon', abbr: 'AXE', weapon: 'axe' },
+  pipe:     { name: 'Lead pipe', cat: 'weapon', abbr: 'PIP', weapon: 'pipe' },
+  bat:      { name: 'Baseball bat', cat: 'weapon', abbr: 'BAT', weapon: 'bat' },
+  crowbar:  { name: 'Crowbar', cat: 'weapon', abbr: 'CRW', weapon: 'crowbar' },
+  pan:      { name: 'Frying pan', cat: 'weapon', abbr: 'PAN', weapon: 'pan' },
+  rollingpin: { name: 'Rolling pin', cat: 'weapon', abbr: 'PIN', weapon: 'rollingpin' },
   beanie:   { name: 'Wool beanie', cat: 'helmet', abbr: 'HAT' },
   flannel:  { name: 'Flannel shirt', cat: 'clothes', abbr: 'SHT' },
   hoodie:   { name: 'Hoodie', cat: 'clothes', abbr: 'HOD' },
@@ -2105,12 +2129,22 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 // Each container rolls every line once: [item, chance]. Most finds are small.
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
-  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['bandage', 0.12], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['bandage', 0.1]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['bagM', 0.04], ['bagL', 0.015]] },
+  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['bandage', 0.12], ['water', 0.15]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['bandage', 0.1]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['bagM', 0.04], ['bagL', 0.015]] },
 };
-WEAPONS.knife = { name: 'Kitchen knife', reach: 32, arc: 45, damage: [18, 26], cooldown: 0.48, duration: 0.32, hitAt: 0.16, knockback: 5, stun: 0.3 };
-WEAPONS.hatchet = { name: 'Hatchet', reach: 34, arc: 60, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 10, stun: 0.45 };
+// Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
+// cooldown = seconds between swings, noise in tiles.
+Object.assign(WEAPONS, {
+  knife:      { name: 'Kitchen knife', reach: 32, arc: 40, damage: [18, 26], cooldown: 0.45, duration: 0.3,  hitAt: 0.15, knockback: 4,  stun: 0.25, noise: 3 },
+  rollingpin: { name: 'Rolling pin',   reach: 33, arc: 55, damage: [12, 18], cooldown: 0.5,  duration: 0.34, hitAt: 0.17, knockback: 9,  stun: 0.45, noise: 4 },
+  pan:        { name: 'Frying pan',    reach: 33, arc: 60, damage: [16, 22], cooldown: 0.6,  duration: 0.38, hitAt: 0.19, knockback: 11, stun: 0.55, noise: 6 },
+  pipe:       { name: 'Lead pipe',     reach: 37, arc: 55, damage: [22, 30], cooldown: 0.65, duration: 0.4,  hitAt: 0.2,  knockback: 9,  stun: 0.45, noise: 5 },
+  crowbar:    { name: 'Crowbar',       reach: 37, arc: 55, damage: [25, 33], cooldown: 0.65, duration: 0.4,  hitAt: 0.2,  knockback: 8,  stun: 0.4,  noise: 5 },
+  bat:        { name: 'Baseball bat',  reach: 41, arc: 75, damage: [22, 30], cooldown: 0.7,  duration: 0.42, hitAt: 0.21, knockback: 15, stun: 0.55, noise: 5 },
+  hatchet:    { name: 'Hatchet',       reach: 34, arc: 55, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 9,  stun: 0.45, noise: 4 },
+  axe:        { name: 'Axe',           reach: 43, arc: 70, damage: [48, 62], cooldown: 1.1,  duration: 0.55, hitAt: 0.3,  knockback: 13, stun: 0.6,  noise: 6, heavy: true },
+});
 function rollLoot(b, f) {
   const C = CONTAINERS[FURN[f.name].container], items = new Array(C.slots).fill(null);
   const mult = b.cond === 'looted' ? 0.25 : b.cond === 'locked' ? 1.3 : 1;
@@ -2217,6 +2251,7 @@ function onKeyPress(k) {
   } else if (state === 'play') {
     if (k === 'escape') { state = 'pause'; ui.pause.classList.remove('hidden'); keys.clear(); }
     else if (k === 'i' || k === 'tab') openInventory();
+    else if (k === 'x') { const e = inv.equip; [e.primary, e.secondary] = [e.secondary, e.primary]; toast(e.primary ? e.primary.name : 'Fists'); }
     else if (k === 'm') openMap();
     else if (k === 'f3') ui.debug.classList.toggle('hidden');
   } else if (state === 'pause') {

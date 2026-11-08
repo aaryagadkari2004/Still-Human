@@ -12,6 +12,7 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | WASD / arrows | Move |
 | Shift | Run |
 | Left click | Attack toward the mouse (hold to keep swinging) |
+| X | Swap primary and secondary weapon |
 | E | Open/close doors; hold to search furniture |
 | Right click (inventory) | Use an item (e.g. bandage) |
 | I / Tab | Open / close the inventory (the game keeps running) |
@@ -45,7 +46,10 @@ right-click to remove one, C to re-centre.
   sprint up to your full running speed.
 - Fist fighting: click to punch toward the mouse. Fists only reach about a metre and hit within a
   ~110° arc. Each punch does 9-14 damage (zombies have 100), staggers the zombie, interrupts its
-  attack and knocks it back a little. Weapons will plug into the same system.
+  attack and knocks it back a little.
+- Melee weapons (equip in the primary slot): kitchen knife, rolling pin, frying pan, lead pipe,
+  crowbar, baseball bat, hatchet and axe, each with its own reach, swing width, damage, speed,
+  knockback and noise.
 - Zombie deaths: the body staggers from the last blow, topples away from it, bounces as it lands,
   and a blood pool spreads underneath. Bodies stay for 90 seconds, then fade.
 - Every zombie gets its own clothing colours (top and bottom; dresses are one colour). Skin, hair,

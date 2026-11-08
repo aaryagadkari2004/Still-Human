@@ -41,6 +41,7 @@ ASSETS = {
     "fTable": "furniture/dining-table.png",
     "fChair": "furniture/chair.png",
     "itemsFood": "items_food_v1.png",
+    "itemsMelee": "items_melee_v1.png",
     "zWalkerMask": "zombie_walker_v1_mask.png",
     "zWalker2Mask": "zombie_walker2_v1_mask.png",
     "zWalker3Mask": "zombie_walker3_v1_mask.png",

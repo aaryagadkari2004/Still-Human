@@ -124,12 +124,17 @@ class WorldGen {
     const P = 2, S = CHUNK + P * 2;
     const ox = cx * CHUNK - P, oy = cy * CHUNK - P;
     const rawW = new Uint8Array(S * S), rawD = new Uint8Array(S * S), dry = new Uint8Array(S * S);
+    // Houses and roads near this chunk (see buildings_world.js).
+    const plans = typeof plansInRect === 'function'
+      ? plansInRect(this, ox - LOT_MARGIN, oy - LOT_MARGIN, ox + S + LOT_MARGIN, oy + S + LOT_MARGIN) : { buildings: [], roads: [] };
+    const inRoad = (x, y) => plans.roads.some(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
     for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
       const f = this.field(ox + i, oy + j);
       const k = j * S + i;
-      rawW[k] = f.isWater ? 1 : 0;
-      rawD[k] = f.isDirt ? 1 : 0;
-      dry[k] = f.isDry ? 1 : 0;
+      const road = plans.roads.length && inRoad(ox + i, oy + j);
+      rawW[k] = f.isWater && !road ? 1 : 0;
+      rawD[k] = f.isDirt || road ? 1 : 0;
+      dry[k] = f.isDry && !road ? 1 : 0;
     }
     // "Opening": keep only cells that are part of a full 2x2 block. This
     // removes 1-tile-wide strips, which the 13-piece edge sets can't draw.
@@ -161,6 +166,16 @@ class WorldGen {
       return row * 3 + col;
     };
 
+    // Tiles covered by a house (bld) or its cleared yard (lot): nothing grows there.
+    const bld = new Uint8Array(CHUNK * CHUNK), lot = new Uint8Array(CHUNK * CHUNK);
+    for (const b of plans.buildings) {
+      for (let y = b.y - LOT_MARGIN; y < b.y + b.h + LOT_MARGIN; y++) for (let x = b.x - LOT_MARGIN; x < b.x + b.w + LOT_MARGIN; x++) {
+        const tx = x - cx * CHUNK, ty = y - cy * CHUNK;
+        if (tx < 0 || ty < 0 || tx >= CHUNK || ty >= CHUNK) continue;
+        lot[ty * CHUNK + tx] = 1;
+        if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) bld[ty * CHUNK + tx] = 1;
+      }
+    }
     const type = new Uint8Array(CHUNK * CHUNK);
     const edge = new Uint8Array(CHUNK * CHUNK).fill(EDGE_NONE);
     const vari = new Uint8Array(CHUNK * CHUNK);
@@ -186,6 +201,7 @@ class WorldGen {
       return true;
     };
     const plantable = (tx, ty) => {
+      if (lot[ty * CHUNK + tx]) return false;
       const t = type[ty * CHUNK + tx];
       return (t === T_GRASS || t === T_DRY) && clearLand(tx, ty);
     };
@@ -242,7 +258,7 @@ class WorldGen {
     const details = [];
     for (let ty = 0; ty < CHUNK; ty++) for (let tx = 0; tx < CHUNK; tx++) {
       const k = ty * CHUNK + tx;
-      if (type[k] !== T_GRASS && type[k] !== T_DRY) continue;
+      if ((type[k] !== T_GRASS && type[k] !== T_DRY) || bld[k]) continue;
       const wx = bx + tx, wy = by + ty;
       if (hash01(wx, wy, s ^ 0x301) > 0.07) continue;
       const h = hashInt(wx, wy, s ^ 0x302);
@@ -251,7 +267,7 @@ class WorldGen {
 
     // Objects sorted by depth once, so drawing only needs a merge.
     objects.sort((a, b) => a.y - b.y);
-    return { cx, cy, type, edge, vari, objects, details };
+    return { cx, cy, type, edge, vari, objects, details, bld, buildings: plans.buildings.filter(b => b.x < bx + CHUNK && b.x + b.w > bx && b.y < by + CHUNK && b.y + b.h > by) };
   }
 }
 

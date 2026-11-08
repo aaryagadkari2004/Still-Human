@@ -25,6 +25,21 @@ ASSETS = {
     "zWalker4": "zombie_walker4_v1.png",
     "zWalker5": "zombie_walker5_v1.png",
     "zBrute": "zombie_brute_v1.png",
+    "cabLogs": "cabin_logs_v1.png",
+    "cabRed": "cabin_redplank_v1.png",
+    "cabDark": "cabin_darkplank_v1.png",
+    "intWall": "cabin_interior_wall_v1.png",
+    "wallTop": "walltop_wood_v1.png",
+    "wallOpen": "wall_openings_top_v1.png",
+    "floorWood": "floor_wood_v1.png",
+    "fBed": "furniture/single-bed.png",
+    "fDresser": "furniture/dresser.png",
+    "fShelf": "furniture/shelving.png",
+    "fFridge": "furniture/refrigerator.png",
+    "fStove": "furniture/stove.png",
+    "fCounter": "furniture/sink-counter.png",
+    "fTable": "furniture/dining-table.png",
+    "fChair": "furniture/chair.png",
     "zWalkerMask": "zombie_walker_v1_mask.png",
     "zWalker2Mask": "zombie_walker2_v1_mask.png",
     "zWalker3Mask": "zombie_walker3_v1_mask.png",
@@ -43,6 +58,7 @@ def main():
     build = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     out = (tpl.replace("{{ASSETS}}", json.dumps(assets))
               .replace("{{WORLD}}", (ROOT / "src" / "world.js").read_text())
+              .replace("{{BUILDINGS}}", (ROOT / "src" / "buildings_world.js").read_text())
               .replace("{{GAME}}", (ROOT / "src" / "game.js").read_text())
               .replace("{{BUILD}}", build))
     (ROOT / "index.html").write_text(out)

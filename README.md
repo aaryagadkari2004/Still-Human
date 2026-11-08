@@ -12,6 +12,8 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | WASD / arrows | Move |
 | Shift | Run |
 | Left click | Attack toward the mouse (hold to keep swinging) |
+| E | Open/close doors; hold to search furniture |
+| Right click (inventory) | Use an item (e.g. bandage) |
 | I / Tab | Open / close the inventory (the game keeps running) |
 | M | Open / close the map |
 | Esc | Pause (save, quit to menu) |
@@ -51,6 +53,16 @@ right-click to remove one, C to re-centre.
 - Bleeding: below 70% a part bleeds lightly (clots by itself after 30 s unless hit again),
   below 45% it bleeds steadily, and below 20% it bleeds severely. Bleeding drains that part
   until treated, leaves a blood trail, shows as drops next to the health bar, and pulses on the body figure.
+- Houses: lone cabins and small hamlets (3-5 houses along a dirt road), from 4 floor plans that are
+  randomly mirrored, with 3 exterior materials. Each house has a condition (abandoned, looted or
+  locked up) that sets its doors, windows and loot. Roofs fade and the outside goes dark when you
+  walk in; windows and open doors let a little light and sight through. Walls, furniture, closed doors
+  and unbroken windows block movement. Zombies find their way in through open doors and broken
+  windows; 3 or more together can break doors and windows down (fewer can't). Some houses have
+  zombies inside.
+- Searching: hold E at a fridge, counter, dresser or shelves; contents open in a panel beside the
+  inventory. Early items: bandages and first aid kits (stop bleeding), food and water (for later),
+  kitchen knife and hatchet (weapons), clothes, and small/medium/large backpacks.
 - Inventory: body health figure (parts turn red as they're hurt, hover for %), clothing slots
   (helmet, clothes, pants, shoes), primary and secondary weapon, backpack, and 6 storage slots.
   Backpacks add storage: small +3, medium +6, large +12. Drag items between slots; slots only accept the right kind of item.
@@ -62,6 +74,7 @@ right-click to remove one, C to re-centre.
 ```
 assets/                  art (PNG sprite sheets and tiles)
 src/world.js             world generation (noise, terrain, autotiling, objects)
+src/buildings_world.js   house floor plans and where hamlets and cabins go
 src/game.js              rendering, player, zombies, inventory, map, menus, saves
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html

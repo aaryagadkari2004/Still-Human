@@ -83,7 +83,7 @@ const canvasCache = new Map();  // chunk ground canvases (big)
 const mapCache = new Map();     // 16x16 map images for explored chunks
 const ck = (cx, cy) => cx + ',' + cy;
 
-function resetCaches() { dataCache.clear(); canvasCache.clear(); mapCache.clear(); }
+function resetCaches() { dataCache.clear(); canvasCache.clear(); mapCache.clear(); regionCache.clear(); }
 
 function getData(cx, cy) {
   const key = ck(cx, cy);
@@ -149,7 +149,7 @@ function unloadFarChunks(camX, camY) {
 const MAP_COL = {
   [T_GRASS]: [79, 90, 42], [T_DRY]: [112, 94, 64], [T_DIRT]: [116, 82, 62], [T_WATER]: [58, 88, 92],
 };
-const MAP_TREE = [44, 56, 28];
+const MAP_TREE = [44, 56, 28], MAP_BLD = [96, 70, 56];
 function buildMapImage(cx, cy) {
   const d = getData(cx, cy), ex = explored.get(ck(cx, cy));
   const c = document.createElement('canvas'); c.width = c.height = CHUNK;
@@ -161,7 +161,7 @@ function buildMapImage(cx, cy) {
   }
   for (let i = 0; i < 256; i++) {
     if (!ex || !ex[i]) continue;
-    const col = trees[i] ? MAP_TREE : MAP_COL[d.type[i]];
+    const col = d.bld && d.bld[i] ? MAP_BLD : trees[i] ? MAP_TREE : MAP_COL[d.type[i]];
     im.data[i * 4] = col[0]; im.data[i * 4 + 1] = col[1]; im.data[i * 4 + 2] = col[2]; im.data[i * 4 + 3] = 255;
   }
   g.putImageData(im, 0, 0);
@@ -211,6 +211,7 @@ function blocked(x0, y0, x1, y1) {
       }
       if (rectsHit(x0, y0, x1, y1, wx0, wy0, wx1, wy1)) return true;
     }
+  if (buildingBlocked(x0, y0, x1, y1)) return true;
   const cx0 = Math.floor((x0 - 64) / CPX), cx1 = Math.floor((x1 + 64) / CPX);
   const cy0 = Math.floor((y0 - 32) / CPX), cy1 = Math.floor((y1 + 32) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -259,7 +260,7 @@ function findSpawn(seedRand) {
     let ok = true;
     for (let dy = -3; dy <= 3 && ok; dy++) for (let dx = -3; dx <= 3 && ok; dx++) if (tileAt(tx + dx, ty + dy).t === T_WATER) ok = false;
     const px = tx * TILE + 16, py = ty * TILE + 24;
-    if (ok && !feetBlocked(px, py) && !blocked(px - 24, py - 24, px + 24, py + 8)) return { x: px, y: py };
+    if (ok && !feetBlocked(px, py) && !blocked(px - 24, py - 24, px + 24, py + 8) && !buildingAt(px, py - 4)) return { x: px, y: py };
   }
   return { x: sx * TILE + 16, y: sy * TILE + 24 };
 }
@@ -522,17 +523,32 @@ function updateZombie(z, dt) {
   const T = ZOMBIE_TYPES[z.type];
   const ddx = player.x - z.x, ddy = player.y - z.y, d = Math.hypot(ddx, ddy);
   const alive = player.hp > 0;
-  const sees = alive && d < T.sight;
+  // Walls block sight: a zombie in a different building (or outside while you're in one)
+  // only notices you if it's close enough to hear you.
+  const zb = buildingAt(z.x, z.y - 4), pb = buildingAt(player.x, player.y - 4), together = zb === pb;
+  const sees = alive && (together ? d < T.sight : d < 4 * TILE);
   z.cd = Math.max(0, z.cd - dt);
   if (z.flash > 0) z.flash -= dt;
   if (z.dead) { z.deadT += dt; return; }
   if (z.stun > 0) { z.stun -= dt; z.moving = false; return; }
+  const goTo = (tx, ty, speed) => {
+    const nav = navTarget(z, tx, ty);
+    if (nav.bang) {
+      z.mode = 'bang'; z.bang = nav.bang; z.moving = false; faceToward(z, nav.x - z.x, nav.y - z.y);
+      z.atk = (z.atk > 0 ? z.atk : T.windup) - dt; if (z.atk <= 0) z.atk = T.windup;
+      return false;
+    }
+    if (z.mode === 'bang') z.mode = 'chase';
+    z.bang = null;
+    moveZombie(z, nav.x - z.x, nav.y - z.y, speed, dt);
+    return true;
+  };
 
   if (z.mode === 'attack') {
     z.moving = false; faceToward(z, ddx, ddy);
     z.atk -= dt;
     if (z.atk <= 0) {
-      if (alive && d <= T.reach + 8) {
+      if (alive && d <= T.reach + 8 && together) {
         hurtPlayer(T.damage, 'Killed by a zombie.', z.x, z.y);
         if (T.shove && state === 'play') {
           // A brute's blow shoves the player back.
@@ -545,18 +561,19 @@ function updateZombie(z, dt) {
       z.cd = T.cooldown; z.mode = 'chase';
     }
   } else if (sees) {
-    if (z.mode !== 'chase') alertAround(z);
-    z.mode = 'chase'; z.lostT = 0; z.gx = player.x; z.gy = player.y;
-    if (d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
-    else if (d > T.reach - 4) moveZombie(z, ddx, ddy, zSpeed(z, T), dt);
+    if (z.mode !== 'chase' && z.mode !== 'bang') alertAround(z);
+    if (z.mode !== 'bang') z.mode = 'chase';
+    z.lostT = 0; z.gx = player.x; z.gy = player.y;
+    if (together && d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
+    else if (!together || d > T.reach - 4) goTo(player.x, player.y, zSpeed(z, T));
     else { z.moving = false; faceToward(z, ddx, ddy); }
-  } else if (z.mode === 'chase') {
-    // Lost sight (or was alerted): walk to where the player was last seen, then give up.
+  } else if (z.mode === 'chase' || z.mode === 'bang') {
+    // Lost sight (or was alerted): head to where the player was last seen, then give up.
     z.lostT += dt;
     const gx = z.gx - z.x, gy = z.gy - z.y;
-    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget + 4) moveZombie(z, gx, gy, zSpeed(z, T), dt);
+    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget + (z.mode === 'bang' ? 20 : 4)) goTo(z.gx, z.gy, zSpeed(z, T));
     else {
-      z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false;
+      z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false; z.bang = null;
       const h = hordes.get(z.horde); if (h) { h.gx = z.x; h.gy = z.y; } // the horde regroups here
     }
   } else if (z.horde && hordes.has(z.horde)) {
@@ -566,14 +583,21 @@ function updateZombie(z, dt) {
     if (dist > 10) { moveZombie(z, gx, gy, T.wanderSpeed * (dist > 3 * TILE ? 1.6 : 1) * Math.min(1, z.speedMul), dt); z.mode = 'wander'; }
     else { z.moving = false; z.mode = 'idle'; }
   } else if (z.mode === 'wander') {
-    const gx = z.gx - z.x, gy = z.gy - z.y;
     z.t -= dt;
-    if (Math.hypot(gx, gy) < 4 || z.t <= 0) { z.mode = 'idle'; z.t = 2 + Math.random() * 4; z.moving = false; }
-    else moveZombie(z, gx, gy, T.wanderSpeed * z.speedMul, dt);
+    if (Math.hypot(z.gx - z.x, z.gy - z.y) < 6 || z.t <= 0) { z.mode = 'idle'; z.t = 2 + Math.random() * 4; z.moving = false; }
+    else goTo(z.gx, z.gy, T.wanderSpeed * z.speedMul);
   } else {
     z.moving = false; z.t -= dt;
     if (z.t <= 0) {
-      const [gx, gy] = wanderTarget(z.x, z.y, 2, 5);
+      let gx, gy;
+      if (z.home && zb && zb.id === z.home) {
+        // Residents shuffle around inside their house.
+        const L = layoutBuilding(zb), floor = [];
+        for (let y = 0; y < L.H; y++) for (let x = 0; x < L.W; x++) if (L.cells[y][x] === '.') floor.push([x, y]);
+        const [fx, fy] = floor[Math.floor(Math.random() * floor.length)];
+        gx = (zb.x + fx) * TILE + 16; gy = (zb.y + fy) * TILE + 22;
+        if (buildingBlocked(gx - 7, gy - 6, gx + 7, gy)) { z.t = 1; return; }
+      } else [gx, gy] = wanderTarget(z.x, z.y, 2, 5);
       z.mode = 'wander'; z.gx = gx; z.gy = gy; z.t = 12;
     }
   }
@@ -581,10 +605,11 @@ function updateZombie(z, dt) {
 }
 function zombieFrame(z) {
   const f = Math.floor(z.anim) % 4;
-  if (z.mode === 'attack') return [Math.floor((1 - z.atk / ZOMBIE_TYPES[z.type].windup) * 3.99), DIR_ROW[z.dir]];
+  if (z.mode === 'attack' || z.mode === 'bang') return [Math.max(0, Math.min(3, Math.floor((1 - z.atk / ZOMBIE_TYPES[z.type].windup) * 3.99))), DIR_ROW[z.dir]];
   return [f, z.moving ? DIR_ROW[z.dir] : IDLE_ROW[z.dir]];
 }
 function canStand(x, y) {
+  if (buildingAt(x, y - 4)) return false;
   return tileAt(Math.floor(x / TILE), Math.floor(y / TILE)).t !== T_WATER && !feetBlocked(x, y) &&
     !zombies.some(o => Math.abs(o.x - x) < 14 && Math.abs(o.y - y) < 14);
 }
@@ -668,6 +693,7 @@ function bleedLevel(id) {
   const hp = player.parts[id], w = player.wounds[id];
   let lvl = 0;
   for (let i = 1; i < BLEED_LEVELS.length; i++) if (hp < BLEED_LEVELS[i].below) lvl = i;
+  if (w && w.bandaged) return 0;
   if (lvl === 1 && w && w.clotted) return 0;
   return lvl;
 }
@@ -851,6 +877,486 @@ function renderCorpses(camX, camY) {
   }
 }
 
+// ---- Buildings: state, collisions, drawing, doors, zombies, searching ------------------------
+// Placement and floor plans live in buildings_world.js; this part makes them playable.
+const WALL_H = 48, WALL_CUT = 14, ROOF_OH = 6;
+const EXT_SHEETS = ['cabLogs', 'cabRed', 'cabDark'];
+const OPEN_HP = { door: 100, window: 60, boarded: 140 };
+const BANG_RATE = 4;            // damage per second per zombie, only when 3+ are hitting the same door/window
+const BANG_MIN = 3;
+const bstate = new Map();       // building id -> { o: {i: {st, hp}}, c: {i: [items]}, z: 0 }
+function bState(b) { let s = bstate.get(b.id); if (!s) { s = { o: {}, c: {}, z: 0 }; bstate.set(b.id, s); } return s; }
+
+function buildingsIn(x0, y0, x1, y1) {   // pixel rect
+  if (!world) return [];
+  return plansInRect(world, Math.floor(x0 / TILE), Math.floor(y0 / TILE), Math.floor(x1 / TILE), Math.floor(y1 / TILE)).buildings;
+}
+// Wall centre lines of a building, in pixels.
+function bLines(b) { return { L: b.x * TILE + 16, T: b.y * TILE + 16, R: (b.x + b.w - 1) * TILE + 16, B: (b.y + b.h - 1) * TILE + 16 }; }
+function buildingAt(x, y) {
+  for (const b of buildingsIn(x, y, x, y)) { const l = bLines(b); if (x > l.L && x < l.R && y > l.T && y < l.B) return b; }
+  return null;
+}
+function openingState(b, i) {
+  const s = bstate.get(b.id);
+  if (s && s.o[i]) return s.o[i].st;
+  const o = layoutBuilding(b).openings[i];
+  const r = hash01(b.seed, i, 0x55);
+  if (o.kind === 'door') {
+    if (!o.outer) return r < (b.cond === 'locked' ? 0.3 : 0.6) ? 'open' : 'closed';
+    if (b.cond === 'looted') return r < 0.5 ? 'open' : r < 0.68 ? 'broken' : 'closed';
+    if (b.cond === 'abandoned') return r < 0.45 ? 'open' : 'closed';
+    return 'closed';
+  }
+  if (b.cond === 'looted') return r < 0.35 ? 'broken' : 'intact';
+  if (b.cond === 'abandoned') return r < 0.1 ? 'broken' : 'intact';
+  return r < 0.18 && o.outer ? 'boarded' : 'intact';
+}
+function setOpening(b, i, st) {
+  const s = bState(b); s.o[i] = { st, hp: s.o[i] ? s.o[i].hp : undefined };
+  b._col = null; b._gfx = null;
+}
+function passable(b, i) {
+  const o = layoutBuilding(b).openings[i], st = openingState(b, i);
+  return o.kind === 'door' ? st !== 'closed' : st === 'broken';
+}
+function openingIndexAt(b, x, y) { return layoutBuilding(b).openings.findIndex(o => o.x === x && o.y === y); }
+function openingCenter(b, o) { return [(b.x + o.x) * TILE + 16, (b.y + o.y) * TILE + 16]; }
+function openingNormal(b, o) { const L = layoutBuilding(b); return o.y === L.H - 1 ? [0, 1] : o.y === 0 ? [0, -1] : o.x === 0 ? [-1, 0] : [1, 0]; }
+
+// Collision rectangles: wall arms, closed doors, unbroken windows and furniture.
+function buildingColliders(b) {
+  if (b._col) return b._col;
+  const L = layoutBuilding(b), rects = [], T = 5;
+  const wallish = (x, y) => x >= 0 && y >= 0 && x < L.W && y < L.H && L.isWallish(L.cells[y][x]);
+  for (let y = 0; y < L.H; y++) for (let x = 0; x < L.W; x++) {
+    if (!wallish(x, y)) continue;
+    const oi = openingIndexAt(b, x, y);
+    if (oi >= 0 && passable(b, oi)) continue;
+    const cx = (b.x + x) * TILE + 16, cy = (b.y + y) * TILE + 16;
+    rects.push([cx - T, cy - T, cx + T, cy + T]);
+    if (wallish(x, y - 1)) rects.push([cx - T, cy - 16, cx + T, cy]);
+    if (wallish(x, y + 1)) rects.push([cx - T, cy, cx + T, cy + 16]);
+    if (wallish(x - 1, y)) rects.push([cx - 16, cy - T, cx, cy + T]);
+    if (wallish(x + 1, y)) rects.push([cx, cy - T, cx + 16, cy + T]);
+  }
+  for (const f of L.furniture) {
+    const F = FURN[f.name], x0 = (b.x + f.x) * TILE, y0 = (b.y + f.y) * TILE;
+    const inset = f.name === 'chair' ? 8 : 3;
+    rects.push([x0 + inset, y0 + (F.h > 1 ? 4 : 12), x0 + F.w * TILE - inset, y0 + F.h * TILE - 2]);
+  }
+  b._col = rects;
+  return rects;
+}
+function buildingBlocked(x0, y0, x1, y1) {
+  for (const b of buildingsIn(x0 - 32, y0 - 32, x1 + 32, y1 + 32))
+    for (const r of buildingColliders(b)) if (x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1]) return true;
+  return false;
+}
+
+// Tile-level path inside a building (for zombies finding their way between rooms).
+function bPathNext(b, fromX, fromY, goalTx, goalTy) {
+  const L = layoutBuilding(b);
+  const sx = Math.floor(fromX / TILE) - b.x, sy = Math.floor(fromY / TILE) - b.y;
+  if (sx === goalTx && sy === goalTy) return null;
+  const blockedF = new Set();
+  for (const f of L.furniture) { const F = FURN[f.name]; for (let y = f.y; y < f.y + F.h; y++) for (let x = f.x; x < f.x + F.w; x++) blockedF.add(x + ',' + y); }
+  const ok = (x, y) => {
+    if (x < 0 || y < 0 || x >= L.W || y >= L.H) return false;
+    if (x === goalTx && y === goalTy) return true;
+    const c = L.cells[y][x];
+    if (c === '.') return !blockedF.has(x + ',' + y);
+    const oi = openingIndexAt(b, x, y);
+    return oi >= 0 && passable(b, oi);
+  };
+  const prev = new Map(), q = [[goalTx, goalTy]]; prev.set(goalTx + ',' + goalTy, null);
+  while (q.length) {
+    const [x, y] = q.shift();
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy, k = nx + ',' + ny;
+      if (prev.has(k)) continue;
+      if (nx === sx && ny === sy) { return [(b.x + x) * TILE + 16, (b.y + y) * TILE + 20]; }
+      if (!ok(nx, ny)) continue;
+      prev.set(k, 1); q.push([nx, ny]);
+    }
+  }
+  return null;
+}
+// Where should a zombie walk to reach (tx,ty)? Handles going in and out of houses.
+// Returns { x, y } to walk toward, or { bang: [building, openingIndex], x, y } to break through.
+function navTarget(z, tx, ty) {
+  const zb = buildingAt(z.x, z.y - 4), tb = buildingAt(tx, ty - 4);
+  if (zb === tb) {
+    if (!zb) return { x: tx, y: ty };
+    const n = bPathNext(zb, z.x, z.y - 4, Math.floor(tx / TILE) - zb.x, Math.floor((ty - 4) / TILE) - zb.y);
+    return n ? { x: n[0], y: n[1] } : { x: tx, y: ty };
+  }
+  const via = zb || tb, leaving = !!zb;
+  const L = layoutBuilding(via);
+  let best = -1, bd = Infinity, bestClosed = -1, bdc = Infinity;
+  L.openings.forEach((o, i) => {
+    if (!o.outer) return;
+    const [cx, cy] = openingCenter(via, o);
+    const d = Math.hypot(cx - z.x, cy - z.y) + (leaving ? 0 : Math.hypot(cx - tx, cy - ty) * 0.5);
+    if (passable(via, i)) { if (d < bd) { bd = d; best = i; } }
+    else if (d < bdc) { bdc = d; bestClosed = i; }
+  });
+  const pick = best >= 0 ? best : bestClosed;
+  if (pick < 0) return { x: tx, y: ty };
+  const o = L.openings[pick], [cx, cy] = openingCenter(via, o), [nx, ny] = openingNormal(via, o);
+  const outX = cx + nx * 26, outY = cy + ny * 26 + 4, inX = cx - nx * 26, inY = cy - ny * 26 + 4;
+  if (leaving) {
+    const atOpening = Math.floor(z.x / TILE) === via.x + o.x && Math.floor((z.y - 4) / TILE) === via.y + o.y;
+    if (best >= 0) {
+      if (atOpening || Math.hypot(z.x - inX, z.y - inY) < 10) return { x: outX, y: outY };
+      const n = bPathNext(via, z.x, z.y - 4, o.x, o.y);
+      return n ? { x: n[0], y: n[1] } : { x: inX, y: inY };
+    }
+    if (Math.hypot(z.x - inX, z.y - inY) < 16) return { bang: [via, pick], x: cx, y: cy };
+    const n = bPathNext(via, z.x, z.y - 4, o.x - nx, o.y - ny);
+    return n ? { x: n[0], y: n[1] } : { x: inX, y: inY };
+  }
+  if (best >= 0) {
+    if (Math.hypot(z.x - outX, z.y - outY) < 12 || Math.hypot(z.x - cx, z.y - cy - 4) < 20) return { x: inX, y: inY };
+    return { x: outX, y: outY };
+  }
+  if (Math.hypot(z.x - outX, z.y - outY) < 16) return { bang: [via, pick], x: cx, y: cy };
+  return { x: outX, y: outY };
+}
+function updateBanging(dt) {
+  const counts = new Map();
+  for (const z of zombies) if (!z.dead && z.mode === 'bang' && z.bang) {
+    const k = z.bang[0].id + '|' + z.bang[1];
+    const c = counts.get(k) || { b: z.bang[0], i: z.bang[1], n: 0 }; c.n++; counts.set(k, c);
+  }
+  for (const c of counts.values()) {
+    if (c.n < BANG_MIN || passable(c.b, c.i)) continue;   // fewer than 3 zombies can't break through
+    const s = bState(c.b), o = layoutBuilding(c.b).openings[c.i], st = openingState(c.b, c.i);
+    const rec = s.o[c.i] || (s.o[c.i] = { st, hp: undefined });
+    if (rec.hp == null) rec.hp = o.kind === 'door' ? OPEN_HP.door : st === 'boarded' ? OPEN_HP.boarded : OPEN_HP.window;
+    rec.hp -= dt * c.n * BANG_RATE;
+    c.b._shake = 0.15;
+    if (rec.hp <= 0) setOpening(c.b, c.i, 'broken');
+  }
+}
+
+// ---- Resident zombies ----
+function checkResidents() {
+  for (const b of buildingsIn(player.x - 14 * TILE, player.y - 14 * TILE, player.x + 14 * TILE, player.y + 14 * TILE)) {
+    const s = bState(b); if (s.z) continue;
+    s.z = 1;
+    const r = hash01(b.seed, 7, 0x2a), L = layoutBuilding(b);
+    const n = b.cond === 'locked' ? (r < 0.4 ? 0 : r < 0.8 ? 1 : 2) : b.cond === 'abandoned' ? (r < 0.65 ? 0 : 1) : (r < 0.85 ? 0 : 1);
+    for (let k = 0; k < n && k < L.zspots.length; k++) {
+      const [zx, zy] = L.zspots[(k + Math.floor(r * 10)) % L.zspots.length];
+      const z = makeZombie(Math.random() < 0.08 ? 'brute' : 'walker', (b.x + zx) * TILE + 16, (b.y + zy) * TILE + 22);
+      z.home = b.id; z.t = 3 + Math.random() * 4;
+      zombies.push(z);
+    }
+  }
+}
+
+// ---- Drawing --------------------------------------------------------------------------------
+const bedColors = [[120, 40, 40], [52, 72, 110], [70, 90, 50], [140, 120, 70], [90, 60, 110], [60, 60, 60]];
+const bedCache = {};
+function bedSprite(ci) {
+  if (bedCache[ci]) return bedCache[ci];
+  const img = IMG.fBed, c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height), p = d.data, rgb = bedColors[ci];
+  // The blanket: olive pixels below the pillow.
+  const mask = [], hsl = (r, gg, bb) => { r /= 255; gg /= 255; bb /= 255; const mx = Math.max(r, gg, bb), mn = Math.min(r, gg, bb), l = (mx + mn) / 2; let h = 0;
+    if (mx !== mn) { const dd = mx - mn; h = mx === r ? ((gg - bb) / dd + (gg < bb ? 6 : 0)) : mx === gg ? (bb - r) / dd + 2 : (r - gg) / dd + 4; h *= 60; } return [h, l]; };
+  let sum = 0;
+  for (let y = 25; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+    const k = (y * c.width + x) * 4; if (!p[k + 3]) continue;
+    const [h, l] = hsl(p[k], p[k + 1], p[k + 2]);
+    if (h >= 48 && h <= 70 && l < 0.45) { mask.push(k); sum += (p[k] + p[k + 1] + p[k + 2]) / 3; }
+  }
+  const mean = sum / (mask.length || 1);
+  for (const k of mask) { const lum = (p[k] + p[k + 1] + p[k + 2]) / 3; for (let j = 0; j < 3; j++) p[k + j] = Math.min(255, rgb[j] * (lum / mean) * 0.9 + p[k + j] * 0.1); }
+  g.putImageData(d, 0, 0);
+  return (bedCache[ci] = c);
+}
+function sliceRoof(sheet, w, h) {
+  // Builds a roof of any pixel size from the 3x3 roof block (corners, edges, middle).
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+  const src = (sx, sy) => [sx * 32, 96 + sy * 32];
+  for (let y = 0; y < h; y += 32) for (let x = 0; x < w; x += 32) {
+    const sx = x === 0 ? 0 : (x + 32 >= w ? 2 : 1), sy = y === 0 ? 0 : (y + 32 >= h ? 2 : 1);
+    const [ax, ay] = src(sx, sy);
+    const dw = Math.min(32, w - x), dh = Math.min(32, h - y);
+    // Right/bottom pieces are anchored to the far edge so the border lines up.
+    const ox = sx === 2 ? w - 32 : x, oy = sy === 2 ? h - 32 : y;
+    g.drawImage(sheet, ax, ay, 32, 32, ox, oy, 32, 32);
+    if (sx !== 2 && sy !== 2 && dw < 32) { /* covered by edge pieces */ }
+  }
+  return c;
+}
+function gradient(g, x, y, w, h, a0, a1, color = '0,0,0') {
+  for (let i = 0; i < h; i++) { const t = h > 1 ? i / (h - 1) : 0; g.fillStyle = `rgba(${color},${a0 + (a1 - a0) * t})`; g.fillRect(x, y + i, w, 1); }
+}
+// Exterior: ground shadow + front wall (with its doors and windows) + roof. Cached per house.
+function buildExterior(b) {
+  const L = layoutBuilding(b), l = bLines(b), sheet = IMG[EXT_SHEETS[b.mat]];
+  const base = l.B + 4, faceL = l.L - 4, faceR = l.R + 4, faceW = faceR - faceL;
+  const pad = 40, x0 = faceL - pad, y0 = l.T - 4 - WALL_H - ROOF_OH - pad;
+  const c = document.createElement('canvas'); c.width = faceW + pad * 2 + 24; c.height = base - y0 + pad;
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+  const X = v => v - x0, Y = v => v - y0;
+  // Shadow on the ground (light from the top-left).
+  const roofTop = l.T - 4 - WALL_H - ROOF_OH;
+  g.fillStyle = 'rgba(10,14,6,0.38)';
+  g.beginPath();
+  g.moveTo(X(faceR + ROOF_OH), Y(roofTop)); g.lineTo(X(faceR + ROOF_OH + 18), Y(roofTop + 14));
+  g.lineTo(X(faceR + 18), Y(base + 8)); g.lineTo(X(faceL + 14), Y(base + 8)); g.lineTo(X(faceL), Y(base));
+  g.lineTo(X(faceR), Y(base)); g.closePath(); g.fill();
+  // Front wall.
+  const south = new Map(); L.openings.forEach((o, i) => { if (o.south) south.set(o.x, i); });
+  for (let tx = 0; tx < L.W; tx++) {
+    const px = (b.x + tx) * TILE;
+    let sx = 32 + (tx % 2) * 32, sy = 0;
+    if (south.has(tx)) {
+      const i = south.get(tx), o = L.openings[i], st = openingState(b, i);
+      sy = 48;
+      sx = o.kind === 'door' ? (st === 'closed' ? 0 : st === 'open' ? 32 : 64) : (st === 'intact' ? 96 : st === 'broken' ? 128 : 160);
+    }
+    const cl = Math.max(px, faceL), cr = Math.min(px + 32, faceR);
+    if (cr <= cl) continue;
+    g.drawImage(sheet, sx + (cl - px), sy, cr - cl, 48, X(cl), Y(base - 48), cr - cl, 48);
+  }
+  g.drawImage(sheet, 0, 0, 5, 48, X(faceL), Y(base - 48), 5, 48);
+  g.drawImage(sheet, 123, 0, 5, 48, X(faceR - 5), Y(base - 48), 5, 48);
+  gradient(g, X(faceL), Y(base - 48), faceW, 8, 0.55, 0);      // shade under the eaves
+  gradient(g, X(faceL), Y(base - 3), faceW, 3, 0, 0.35);       // contact with the ground
+  b._gfx = { ext: c, x0, y0, roof: buildRoof(b), base };
+}
+function buildRoof(b) {
+  const l = bLines(b), sheet = IMG[EXT_SHEETS[b.mat]];
+  const rx = l.L - 4 - ROOF_OH, ry = l.T - 4 - WALL_H - ROOF_OH;
+  const rw = (l.R + 4 + ROOF_OH) - rx, rh = (l.B + 4 - WALL_H + 3) - ry;
+  const c = sliceRoof(sheet, rw, rh), g = c.getContext('2d');
+  // Two slopes: the back one is darker and shorter; the front one catches more light.
+  const split = Math.round(rh * 0.4);
+  g.fillStyle = 'rgba(0,0,0,0.24)'; g.fillRect(0, 0, rw, split);
+  gradient(g, 0, 0, rw, split, 0.12, 0);
+  g.fillStyle = 'rgba(255,240,210,0.05)'; g.fillRect(0, split, rw, rh - split);
+  gradient(g, 0, split, rw, rh - split, 0, 0.24);
+  for (let x = 0; x < rw; x += 32) g.drawImage(sheet, 96, 136, Math.min(32, rw - x), 16, x, split - 8, Math.min(32, rw - x), 16);
+  // Roof edge thickness and right-hand edge.
+  g.fillStyle = '#2e2016'; g.fillRect(0, rh - 4, rw, 3); g.fillStyle = '#120c08'; g.fillRect(0, rh - 1, rw, 1);
+  g.fillRect(rw - 1, 0, 1, rh);
+  // Chimney on some houses.
+  if (b.seed % 3 !== 0) {
+    const cx = Math.round(rw * (b.seed % 2 ? 0.72 : 0.26)), cy = split - 26;
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.moveTo(cx + 14, cy + 4); g.lineTo(cx + 24, cy + 12); g.lineTo(cx + 24, cy + 28); g.lineTo(cx + 14, cy + 24); g.fill();
+    g.fillStyle = '#6e5446'; g.fillRect(cx, cy, 14, 24); g.fillStyle = '#4e3b31'; g.fillRect(cx + 9, cy, 5, 24);
+    g.fillStyle = '#3e342e'; g.fillRect(cx - 1, cy - 3, 16, 3);
+  }
+  return { c, x: rx, y: ry };
+}
+// Interior floor with wall contact shadows and window light. Cached per house.
+function buildFloor(b) {
+  const L = layoutBuilding(b), l = bLines(b);
+  const c = document.createElement('canvas'); c.width = l.R - l.L; c.height = l.B - l.T;
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+  for (let ty = 0; ty < L.H; ty++) for (let tx = 0; tx < L.W; tx++) {
+    const k = hashInt(b.x + tx, b.y + ty, 0x71) % 3;
+    g.drawImage(IMG.floorWood, k * 32, 0, 32, 32, (b.x + tx) * TILE - l.L, (b.y + ty) * TILE - l.T, 32, 32);
+  }
+  // Room edges a little darker.
+  for (let i = 0; i < 16; i++) { g.strokeStyle = `rgba(8,8,8,${0.28 * (1 - i / 16)})`; g.strokeRect(i + 0.5, i + 0.5, c.width - 2 * i - 1, c.height - 2 * i - 1); }
+  const wallish = (x, y) => x >= 0 && y >= 0 && x < L.W && y < L.H && L.isWallish(L.cells[y][x]);
+  for (let ty = 0; ty < L.H; ty++) for (let tx = 0; tx < L.W; tx++) {
+    if (!wallish(tx, ty)) continue;
+    const cx = (b.x + tx) * TILE + 16 - l.L, cy = (b.y + ty) * TILE + 16 - l.T;
+    g.fillStyle = 'rgba(0,0,0,0.2)';
+    if (wallish(tx, ty - 1) || wallish(tx, ty + 1)) g.fillRect(cx + 4, cy - 16, 10, 32);   // vertical walls: shadow to the east
+    if (wallish(tx - 1, ty) || wallish(tx + 1, ty)) g.fillRect(cx - 16, cy + 4, 32, 7);    // horizontal: shadow below
+  }
+  // Daylight through windows.
+  L.openings.forEach((o, i) => {
+    if (o.kind !== 'window' || openingState(b, i) === 'boarded') return;
+    const [cx, cy] = openingCenter(b, o), x = cx - l.L, y = cy - l.T;
+    g.fillStyle = 'rgba(255,236,190,0.13)';
+    g.beginPath();
+    if (o.y === 0) { g.moveTo(x - 9, y + 6); g.lineTo(x + 9, y + 6); g.lineTo(x + 24, y + 60); g.lineTo(x - 2, y + 60); }
+    else if (o.y === L.H - 1) { g.moveTo(x - 9, y - 4); g.lineTo(x + 9, y - 4); g.lineTo(x + 2, y - 30); g.lineTo(x - 14, y - 30); }
+    else if (o.x === 0) { g.moveTo(x + 6, y - 10); g.lineTo(x + 6, y + 10); g.lineTo(x + 50, y + 22); g.lineTo(x + 50, y + 2); }
+    else { g.moveTo(x - 6, y - 10); g.lineTo(x - 6, y + 10); g.lineTo(x - 40, y + 22); g.lineTo(x - 40, y + 2); }
+    g.fill();
+  });
+  return c;
+}
+// One wall tile, raised to wall height (the south wall is cut down when you're inside).
+function drawWallTile(b, tx, ty, cut) {
+  const L = layoutBuilding(b);
+  const wallish = (x, y) => x >= 0 && y >= 0 && x < L.W && y < L.H && L.isWallish(L.cells[y][x]);
+  const n = wallish(tx, ty - 1), e = wallish(tx + 1, ty), s = wallish(tx, ty + 1), w = wallish(tx - 1, ty);
+  const front = ty === L.H - 1, h = front && cut ? WALL_CUT : WALL_H;
+  const px = (b.x + tx) * TILE, cx = px + 16, base = (b.y + ty) * TILE + 20;
+  const oi = openingIndexAt(b, tx, ty), o = oi >= 0 ? L.openings[oi] : null, st = o ? openingState(b, oi) : null;
+  const shake = b._shake > 0 && o ? Math.round(Math.random() * 2 - 1) : 0;
+  if (e || w) {
+    let sx = 32 + ((tx + ty) % 2) * 32, sy = 0;
+    if (o) { sy = 48; sx = o.kind === 'door' ? (st === 'closed' ? 0 : st === 'open' ? 32 : 64) : (st === 'intact' ? 96 : st === 'broken' ? 128 : 160); }
+    const xa = w ? px : cx - 4, xb = e ? px + 32 : cx + 4;
+    bctx.drawImage(IMG.intWall, sx + (xa - px), sy + 48 - h, xb - xa, h, xa + shake, base - h, xb - xa, h);
+    if (ty !== 0) { bctx.fillStyle = 'rgba(0,0,0,0.1)'; bctx.fillRect(xa, base - h, xb - xa, h); }
+    for (let i = 0; i < Math.min(h, 24); i++) { bctx.fillStyle = `rgba(0,0,0,${0.3 * (i / 24) ** 2})`; bctx.fillRect(xa, base - Math.min(h, 24) + i, xb - xa, 1); }
+    if (!w) bctx.drawImage(IMG.intWall, 0, 48 - h, 5, h, cx - 4, base - h, 5, h);
+    if (!e) bctx.drawImage(IMG.intWall, 123, 48 - h, 5, h, cx - 1, base - h, 5, h);
+  } else if (!s) {
+    bctx.drawImage(IMG.intWall, 42, 48 - h, 8, h, cx - 4, base - h, 8, h);
+    bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(cx - 4, base - h, 8, h);
+  }
+  // Top of the wall.
+  let tsx, tsy;
+  if (o) {
+    const vert = !(e || w);
+    tsy = vert ? 32 : 0;
+    tsx = o.kind === 'door' ? (st === 'closed' ? 0 : 32) : (st === 'broken' ? 96 : 64);
+  } else {
+    const key = (n ? 'N' : '') + (e ? 'E' : '') + (s ? 'S' : '') + (w ? 'W' : '');
+    [tsx, tsy] = WALLTOP[key] || WALLTOP.NESW;
+  }
+  bctx.drawImage(o ? IMG.wallOpen : IMG.wallTop, tsx, tsy, 32, 32, px + shake, (b.y + ty) * TILE - h, 32, 32);
+}
+const WALLTOP = { EW: [0, 0], E: [0, 96], W: [64, 96], NS: [32, 0], N: [96, 64], S: [32, 96], NE: [64, 0], ES: [96, 0], SW: [0, 32], NW: [32, 32],
+  NES: [64, 32], ESW: [96, 32], NSW: [0, 64], NEW: [32, 64], NESW: [64, 64] };
+function drawFurniture(b, f, searched) {
+  const F = FURN[f.name], img = f.name === 'bed' ? bedSprite(hashInt(b.seed, f.i, 3) % bedColors.length) : IMG[F.img];
+  const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2), bottom = (b.y + f.y + F.h) * TILE;
+  bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(x + 4, bottom - 6, img.width - 1, 6);
+  if (searched) bctx.filter = 'brightness(0.8)';
+  bctx.drawImage(img, x, bottom - img.height);
+  if (searched) bctx.filter = 'none';
+}
+// Adds a building's drawables to the depth-sorted list for this frame.
+let insideB = null;
+function collectBuildings(camX, camY, items) {
+  const bs = buildingsIn(camX - 64, camY - 64, camX + BW + 64, camY + BH + 120);
+  const now = frameTime;
+  for (const b of bs) {
+    if (!b._gfx) buildExterior(b);
+    const target = b === insideB ? 0 : 1;
+    b.roofA = b.roofA == null ? target : b.roofA + Math.sign(target - b.roofA) * Math.min(Math.abs(target - b.roofA), 0.08);
+    if (b._shake > 0) b._shake -= 1 / 60;
+    if (b.roofA < 1) {
+      // Interior visible: floor goes down now, walls and furniture are sorted with everything else.
+      if (!b._floor) b._floor = buildFloor(b);
+      const l = bLines(b);
+      bctx.drawImage(b._floor, l.L, l.T);
+      const L = layoutBuilding(b), s = bstate.get(b.id);
+      for (let ty = 0; ty < L.H; ty++) for (let tx = 0; tx < L.W; tx++)
+        if (L.isWallish(L.cells[ty][tx])) items.push({ k: -3, x: 0, y: (b.y + ty) * TILE + 20, b, tx, ty });
+      for (const f of L.furniture) items.push({ k: -4, x: 0, y: (b.y + f.y + FURN[f.name].h) * TILE - 2, b, f, searched: !!(s && s.c[f.i]) });
+    }
+    items.push({ k: -5, x: 0, y: b._gfx.base, b });
+  }
+  return bs;
+}
+function drawBuildingItem(o) {
+  const b = o.b;
+  if (o.k === -3) { drawWallTile(b, o.tx, o.ty, b === insideB); return; }
+  if (o.k === -4) { drawFurniture(b, o.f, o.searched); return; }
+  // Exterior and roof.
+  const G = b._gfx;
+  if (b.roofA >= 0.999) bctx.drawImage(G.ext, G.x0, G.y0);
+  if (b.roofA > 0.001) {
+    bctx.globalAlpha = b.roofA;
+    bctx.drawImage(G.roof.c, G.roof.x, G.roof.y);
+    bctx.globalAlpha = 1;
+  }
+}
+// Outside goes dark while you're in a house; windows let a little light (and sight) through.
+const darkC = document.createElement('canvas'), darkG = darkC.getContext('2d');
+function renderInsideDarkness(camX, camY) {
+  if (!insideB) return;
+  if (darkC.width !== BW || darkC.height !== BH) { darkC.width = BW; darkC.height = BH; }
+  const g = darkG, l = bLines(insideB);
+  g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, BW, BH);
+  g.fillStyle = 'rgba(3,5,3,0.9)'; g.fillRect(0, 0, BW, BH);
+  g.globalCompositeOperation = 'destination-out';
+  g.filter = 'blur(3px)';
+  g.fillStyle = '#000'; g.fillRect(l.L - 6 - camX, l.T - 6 - WALL_H - camY, l.R - l.L + 12, l.B - l.T + WALL_H + 16);
+  g.filter = 'none';
+  const L = layoutBuilding(insideB);
+  L.openings.forEach((o, i) => {
+    if (!o.outer) return;
+    const st = openingState(insideB, i);
+    if (o.kind === 'window' && st === 'boarded') return;
+    if (o.kind === 'door' && st === 'closed') return;
+    const [cx, cy] = openingCenter(insideB, o), [nx, ny] = openingNormal(insideB, o);
+    const gx = cx + nx * 50 - camX, gy = cy + ny * 50 - camY - (ny ? 10 : 0);
+    const gr = g.createRadialGradient(gx, gy, 4, gx, gy, 78);
+    gr.addColorStop(0, 'rgba(0,0,0,0.62)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(gx - 80, gy - 80, 160, 160);
+  });
+  g.globalCompositeOperation = 'source-over';
+  bctx.drawImage(darkC, 0, 0);
+}
+
+// ---- Interacting: doors (E) and searching (hold E) ----
+let interact = null, searchT = 0;
+const SEARCH_TIME = 0.9;
+function findInteract() {
+  const px = player.x, py = player.y - 8;
+  let best = null, bd = 30;
+  for (const b of buildingsIn(px - 64, py - 64, px + 64, py + 64)) {
+    const L = layoutBuilding(b);
+    L.openings.forEach((o, i) => {
+      if (o.kind !== 'door') return;
+      const [cx, cy] = openingCenter(b, o), d = Math.hypot(cx - px, cy - py);
+      if (d < bd && openingState(b, i) !== 'broken') { bd = d; best = { type: 'door', b, i, x: cx, y: cy }; }
+    });
+    for (const f of L.furniture) {
+      const F = FURN[f.name]; if (!F.container) continue;
+      const fx0 = (b.x + f.x) * TILE, fy0 = (b.y + f.y) * TILE, fx1 = fx0 + F.w * TILE, fy1 = fy0 + F.h * TILE;
+      const dx = Math.max(fx0 - px, 0, px - fx1), dy = Math.max(fy0 - py, 0, py - fy1), d = Math.hypot(dx, dy) + 6;
+      if (d < bd) { bd = d; best = { type: 'search', b, f, x: (fx0 + fx1) / 2, y: fy0 + 4 }; }
+    }
+  }
+  return best;
+}
+function updateInteract(dt) {
+  interact = findInteract();
+  if (interact && interact.type === 'search' && keys.has('e')) {
+    const s = bState(interact.b);
+    if (s.c[interact.f.i]) { if (searchT >= 0) openContainer(interact); searchT = -1; return; }
+    if (searchT < 0) return;
+    searchT += dt;
+    if (searchT >= SEARCH_TIME) { s.c[interact.f.i] = rollLoot(interact.b, interact.f); openContainer(interact); searchT = -1; }
+  } else if (!keys.has('e')) searchT = 0;
+}
+function pressInteract() {
+  if (!interact || interact.type !== 'door') return;
+  const st = openingState(interact.b, interact.i);
+  if (st === 'closed') setOpening(interact.b, interact.i, 'open');
+  else if (st === 'open') {
+    // Can't shut a door on someone standing in it.
+    const [cx, cy] = openingCenter(interact.b, layoutBuilding(interact.b).openings[interact.i]);
+    const inWay = [player, ...zombies.filter(z => !z.dead)].some(a => Math.abs(a.x - cx) < 18 && Math.abs(a.y - 4 - cy) < 18);
+    if (inWay) { toast('Something is in the way'); return; }
+    setOpening(interact.b, interact.i, 'closed');
+  }
+}
+function renderInteractPrompt(camX, camY) {
+  if (!interact || invOpen) return;
+  let label;
+  if (interact.type === 'door') label = openingState(interact.b, interact.i) === 'closed' ? 'E OPEN' : 'E CLOSE';
+  else label = bState(interact.b).c[interact.f.i] ? 'E OPEN' : 'HOLD E SEARCH';
+  const x = Math.round(interact.x - textWidth(label) / 2), y = Math.round(interact.y - (interact.type === 'door' ? 56 : 30));
+  bctx.fillStyle = 'rgba(10,12,8,0.8)'; bctx.fillRect(x - 3, y - 2, textWidth(label) + 6, 9);
+  pixelText(bctx, label, x, y, '#e8dfb8');
+  if (interact.type === 'search' && searchT > 0) {
+    const w = textWidth(label) + 6;
+    bctx.fillStyle = '#000'; bctx.fillRect(x - 3, y + 8, w, 3);
+    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x - 3, y + 8, Math.round(w * Math.min(1, searchT / SEARCH_TIME)), 3);
+  }
+}
+
 // ---- World rendering ---------------------------------------------------------------------------
 let frameTime = 0;
 function drawShadow(x, y, rx, ry) {
@@ -869,7 +1375,6 @@ function renderWorld(camX, camY, withPlayer) {
   const cx1 = Math.floor((camX + BW) / CPX), cy1 = Math.floor((camY + BH) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++)
     bctx.drawImage(getChunkCanvas(cx, cy, true), cx * CPX, cy * CPX);
-  if (withPlayer) { renderBlood(camX, camY, frameTime); renderCorpses(camX, camY); }
   // Pre-build one chunk canvas just outside the view each frame, so walking stays smooth.
   outer: for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++)
     if (!canvasCache.has(ck(cx, cy))) { getChunkCanvas(cx, cy, true); break outer; }
@@ -883,6 +1388,9 @@ function renderWorld(camX, camY, withPlayer) {
       items.push(o);
     }
   }
+  insideB = withPlayer ? buildingAt(player.x, player.y - 4) : null;
+  collectBuildings(camX, camY, items);
+  if (withPlayer) { renderBlood(camX, camY, frameTime); renderCorpses(camX, camY); }
   if (withPlayer) {
     items.push({ k: -1, x: player.x, y: player.y });
     for (const z of zombies) {
@@ -894,6 +1402,7 @@ function renderWorld(camX, camY, withPlayer) {
 
   bctx.fillStyle = 'rgba(16, 20, 8, 0.32)';
   for (const o of items) {
+    if (o.k <= -3) continue;
     if (o.k === -2 && ZOMBIE_TYPES[o.z.type].shadow) drawShadow(o.x, o.y, ...ZOMBIE_TYPES[o.z.type].shadow);
     else if (o.k < 0) drawShadow(o.x, o.y, 9, 3);
     else { const k = KINDS[o.k]; drawShadow(o.x, o.y, k.rx, k.ry); }
@@ -901,6 +1410,7 @@ function renderWorld(camX, camY, withPlayer) {
 
   const pbx0 = withPlayer ? player.x - 11 : 0, pby0 = withPlayer ? player.y - 46 : 0;
   for (const o of items) {
+    if (o.k <= -3) { drawBuildingItem(o); continue; }
     if (o.k === -1) {
       const [fx, fy] = playerFrame(player);
       bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
@@ -926,7 +1436,9 @@ function renderWorld(camX, camY, withPlayer) {
     bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (fade) bctx.globalAlpha = 1;
   }
+  if (withPlayer) renderInteractPrompt(camX, camY);
   bctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (withPlayer) renderInsideDarkness(camX, camY);
 }
 
 
@@ -1113,7 +1625,7 @@ const FONT = (() => {
     Z: '111001010100111', '0': '111101101101111', '1': '010110010010111', '2': '110001010100111', '3': '110001010001110',
     '4': '101101111001001', '5': '111100110001110', '6': '011100111101111', '7': '111001010010010', '8': '111101111101111',
     '9': '111101111001110', '%': '101001010100101', '/': '001001010100100', '.': '000000000000010', '-': '000000111000000',
-    ' ': '000000000000000', '!': '010010010000010', "'": '010010000000000', '+': '000010111010000',
+    ' ': '000000000000000', '!': '010010010000010', ':': '000010000010000', "'": '010010000000000', '+': '000010111010000',
   };
   return g;
 })();
@@ -1175,10 +1687,11 @@ function slotRect(ref) {
   const r = Math.floor(ref.i / INV_COLS), c = ref.i % INV_COLS;
   return { x: STORAGE_X[c], y: STORAGE_Y + r * INV_ROW_H, w: SLOT_W, h: SLOT_H };
 }
-function getItem(ref) { return ref.kind === 'equip' ? inv.equip[ref.id] : inv.storage[ref.i]; }
-function setItem(ref, item) { if (ref.kind === 'equip') inv.equip[ref.id] = item; else inv.storage[ref.i] = item; }
+function getItem(ref) { return ref.kind === 'equip' ? inv.equip[ref.id] : ref.kind === 'cont' ? (container ? container.items[ref.i] : null) : inv.storage[ref.i]; }
+function setItem(ref, item) { if (ref.kind === 'equip') inv.equip[ref.id] = item; else if (ref.kind === 'cont') { if (container) container.items[ref.i] = item; } else inv.storage[ref.i] = item; }
 function accepts(ref, item) {
   if (!item) return true;
+  if (ref.kind === 'cont') return !!container && ref.i < container.items.length && item.cat !== undefined;
   if (ref.kind === 'storage') {
     if (ref.i >= storageSize()) return false;
     return true;
@@ -1252,7 +1765,10 @@ function drawBody(g, now) {
       else { d[k] = Math.min(255, d[k] + 30); d[k + 1] = Math.min(255, d[k + 1] + 30); d[k + 2] = Math.min(255, d[k + 2] + 30); }
     }
   }
-  g.putImageData(im, BODY_BOX.x, BODY_BOX.y);
+  // putImageData ignores transforms, so go through a small canvas.
+  if (!drawBody.c) { drawBody.c = document.createElement('canvas'); drawBody.c.width = BODY_BOX.w; drawBody.c.height = BODY_BOX.h; }
+  drawBody.c.getContext('2d').putImageData(im, 0, 0);
+  g.drawImage(drawBody.c, BODY_BOX.x, BODY_BOX.y);
 }
 const CAT_ABBR = { helmet: 'HLM', clothes: 'TOP', pants: 'PNT', shoes: 'SHO', weapon: 'WPN', backpack: 'BAG', misc: 'ITM' };
 function drawItemIcon(g, item, cx, cy, maxW, maxH) {
@@ -1264,7 +1780,7 @@ function drawItemIcon(g, item, cx, cy, maxW, maxH) {
     // Placeholder until the item has art.
     g.fillStyle = '#2c3a37'; g.fillRect(cx - 13, cy - 8, 26, 16);
     g.fillStyle = UI_ACCENT; g.fillRect(cx - 13, cy - 8, 26, 1); g.fillRect(cx - 13, cy + 7, 26, 1);
-    const ab = CAT_ABBR[item.cat] || 'ITM';
+    const ab = item.abbr || CAT_ABBR[item.cat] || 'ITM';
     pixelText(g, ab, cx - Math.floor(textWidth(ab) / 2), cy - 2, UI_TEXT);
   }
 }
@@ -1286,10 +1802,42 @@ function drawSlotItem(g, ref, item) {
     drawItemIcon(g, item, r.x + r.w / 2, r.y + r.h / 2, r.w - 6, r.h - 6);
   }
 }
+// A searched container opens as a panel to the left of the inventory.
+const CPW = 118;
+function invOX() { return container ? CPW : 0; }
+function contSlotRect(i) { return { x: 14 + (i % 2) * 47, y: 34 + Math.floor(i / 2) * 36, w: SLOT_W, h: SLOT_H }; }
+function contSlotAt(x, y) {
+  if (!container || x >= CPW) return null;
+  for (let i = 0; i < container.items.length; i++) { const r = contSlotRect(i); if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return { kind: 'cont', i }; }
+  return null;
+}
+function renderContainerPanel(g, H) {
+  const w = CPW - 6;
+  g.fillStyle = '#000'; g.fillRect(0, 0, w, H);
+  g.fillStyle = '#536058'; g.fillRect(2, 2, w - 4, H - 4);
+  g.fillStyle = '#35423d'; g.fillRect(3, 3, w - 6, H - 6);
+  g.fillStyle = UI_BG; g.fillRect(5, 5, w - 10, H - 10);
+  g.fillStyle = '#1a2323'; g.fillRect(5, 5, w - 10, 20);
+  g.fillStyle = UI_ACCENT; g.fillRect(9, 11, 2, 9);
+  pixelText(g, container.name, 14, 13, UI_TEXT);
+  container.items.forEach((it, i) => {
+    const r = contSlotRect(i);
+    g.drawImage(IMG.invPanel, 16, 274, SLOT_W, SLOT_H, r.x, r.y, SLOT_W, SLOT_H);
+    if (it && !(invDrag && invDrag.from.kind === 'cont' && invDrag.from.i === i)) {
+      g.fillStyle = UI_DARK; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      drawItemIcon(g, it, r.x + r.w / 2, r.y + r.h / 2, r.w - 6, r.h - 6);
+    }
+  });
+  if (container.items.every(x => !x)) pixelText(g, 'EMPTY', Math.round(w / 2 - textWidth('EMPTY') / 2), 34 + Math.ceil(container.items.length / 2) * 36 + 4, UI_DIM);
+  pixelText(g, 'RIGHT-CLICK: USE', 9, H - 14, UI_DIM);
+}
 function renderInventory(now) {
-  const H = invHeight(), rows = invRows();
-  if (invCanvas.width !== INV_W || invCanvas.height !== H) { invCanvas.width = INV_W; invCanvas.height = H; layoutInventory(); }
+  const H = invHeight(), rows = invRows(), OX = invOX();
+  if (invCanvas.width !== INV_W + OX || invCanvas.height !== H) { invCanvas.width = INV_W + OX; invCanvas.height = H; layoutInventory(); }
   const g = ictx; g.imageSmoothingEnabled = false;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, invCanvas.width, H);
+  if (container) renderContainerPanel(g, H);
+  g.setTransform(1, 0, 0, 1, OX, 0);
   g.drawImage(IMG.invPanel, 0, 0, INV_W, INV_SPLIT, 0, 0, INV_W, INV_SPLIT);
   for (let r = 1; r < rows; r++) g.drawImage(IMG.invPanel, 0, INV_ROW_SRC, INV_W, INV_ROW_H, 0, INV_SPLIT + (r - 1) * INV_ROW_H, INV_W, INV_ROW_H);
   g.drawImage(IMG.invPanel, 0, INV_SPLIT, INV_W, INV_BASE_H - INV_SPLIT, 0, INV_SPLIT + (rows - 1) * INV_ROW_H, INV_W, INV_BASE_H - INV_SPLIT);
@@ -1309,7 +1857,7 @@ function renderInventory(now) {
 
   // Hover highlight for slots (green if the dragged item fits, red if not).
   if (invHover && invHover.slot) {
-    const r = slotRect(invHover.slot);
+    const r = invHover.slot.kind === 'cont' ? (c => ({ ...c, x: c.x - OX }))(contSlotRect(invHover.slot.i)) : slotRect(invHover.slot);
     const ok = !invDrag || (accepts(invHover.slot, invDrag.item) && accepts(invDrag.from, getItem(invHover.slot)));
     g.strokeStyle = invDrag ? (ok ? '#a8d68f' : '#d0574a') : '#6f8378'; g.lineWidth = 1;
     g.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
@@ -1332,12 +1880,13 @@ function renderInventory(now) {
     pixelText(g, tip, Math.round(INV_W / 2 - w / 2) + 4, H - 10, invMsg && now < invMsg.until ? '#e0b45a' : UI_TEXT);
   }
   // The item being dragged follows the cursor.
+  g.setTransform(1, 0, 0, 1, 0, 0);
   if (invDrag && invDrag.px != null) drawItemIcon(g, invDrag.item, invDrag.px, invDrag.py, 40, 28);
 }
 function layoutInventory() {
-  const H = invHeight();
-  invScale = Math.max(1, Math.floor(Math.min(window.innerWidth * 0.94 / INV_W, window.innerHeight * 0.94 / H)));
-  invCanvas.style.width = INV_W * invScale + 'px';
+  const H = invHeight(), Wt = INV_W + invOX();
+  invScale = Math.max(1, Math.floor(Math.min(window.innerWidth * 0.94 / Wt, window.innerHeight * 0.94 / H)));
+  invCanvas.style.width = Wt * invScale + 'px';
   invCanvas.style.height = H * invScale + 'px';
 }
 window.addEventListener('resize', layoutInventory);
@@ -1345,32 +1894,98 @@ function invPoint(e) {
   const r = invCanvas.getBoundingClientRect();
   return [Math.floor((e.clientX - r.left) / invScale), Math.floor((e.clientY - r.top) / invScale)];
 }
+function anySlotAt(x, y) { return contSlotAt(x, y) || slotAt(x - invOX(), y); }
 invCanvas.addEventListener('mousemove', e => {
   const [x, y] = invPoint(e);
-  invHover = { slot: slotAt(x, y), part: bodyPartAt(x, y) };
+  invHover = { slot: anySlotAt(x, y), part: bodyPartAt(x - invOX(), y) };
   if (invDrag) { invDrag.px = x; invDrag.py = y; }
 });
 invCanvas.addEventListener('mouseleave', () => { invHover = null; });
 invCanvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
-  const [x, y] = invPoint(e), ref = slotAt(x, y);
+  const [x, y] = invPoint(e), ref = anySlotAt(x, y);
   if (ref && getItem(ref)) invDrag = { from: ref, item: getItem(ref), px: x, py: y };
 });
 window.addEventListener('mouseup', e => {
   if (!invDrag) return;
-  const [x, y] = invPoint(e), to = slotAt(x, y);
+  const [x, y] = invPoint(e), to = anySlotAt(x, y);
   if (to) moveItem(invDrag.from, to);
   invDrag = null;
 });
-invCanvas.addEventListener('contextmenu', e => e.preventDefault());
+invCanvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const [x, y] = invPoint(e), ref = anySlotAt(x, y);
+  if (ref) useItem(ref);
+});
 function openInventory() {
   invOpen = true; invHover = null; invDrag = null;
   fitStorage(); layoutInventory();
   invCanvas.classList.remove('hidden'); canvas.classList.add('blurred');
 }
 function closeInventory() {
-  invOpen = false; invDrag = null;
+  invOpen = false; invDrag = null; container = null;
   invCanvas.classList.add('hidden'); canvas.classList.remove('blurred');
+}
+
+// ---- Items and loot ----------------------------------------------------------------------------
+// abbr is shown on the placeholder icon until the item has art.
+const ITEMS = {
+  bandage:  { name: 'Bandage', cat: 'misc', abbr: 'BND', use: 'bandage' },
+  firstaid: { name: 'First aid kit', cat: 'misc', abbr: 'AID', use: 'firstaid' },
+  beans:    { name: 'Canned beans', cat: 'misc', abbr: 'CAN', use: 'food' },
+  water:    { name: 'Water bottle', cat: 'misc', abbr: 'H2O', use: 'drink' },
+  soda:     { name: 'Soda', cat: 'misc', abbr: 'POP', use: 'drink' },
+  knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
+  hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'AXE', weapon: 'hatchet' },
+  beanie:   { name: 'Wool beanie', cat: 'helmet', abbr: 'HAT' },
+  flannel:  { name: 'Flannel shirt', cat: 'clothes', abbr: 'SHT' },
+  hoodie:   { name: 'Hoodie', cat: 'clothes', abbr: 'HOD' },
+  jeans:    { name: 'Jeans', cat: 'pants', abbr: 'JNS' },
+  boots:    { name: 'Work boots', cat: 'shoes', abbr: 'BTS' },
+  bagS:     { name: 'Small backpack', cat: 'backpack', abbr: 'BG3', slots: 3 },
+  bagM:     { name: 'Medium backpack', cat: 'backpack', abbr: 'BG6', slots: 6 },
+  bagL:     { name: 'Large backpack', cat: 'backpack', abbr: 'B12', slots: 12 },
+};
+function makeItem(key) { return { key, ...ITEMS[key] }; }
+// Each container rolls every line once: [item, chance]. Most finds are small.
+const CONTAINERS = {
+  fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['beans', 0.15]] },
+  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['beans', 0.15], ['knife', 0.18], ['bandage', 0.12], ['water', 0.15]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['bandage', 0.1]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['hatchet', 0.06], ['bagM', 0.04], ['bagL', 0.015]] },
+};
+WEAPONS.knife = { name: 'Kitchen knife', reach: 32, arc: 45, damage: [18, 26], cooldown: 0.48, duration: 0.32, hitAt: 0.16, knockback: 5, stun: 0.3 };
+WEAPONS.hatchet = { name: 'Hatchet', reach: 34, arc: 60, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 10, stun: 0.45 };
+function rollLoot(b, f) {
+  const C = CONTAINERS[FURN[f.name].container], items = new Array(C.slots).fill(null);
+  const mult = b.cond === 'looted' ? 0.25 : b.cond === 'locked' ? 1.3 : 1;
+  let n = 0;
+  C.loot.forEach(([key, chance], k) => { if (n < C.slots && hash01(b.seed, f.i * 31 + k, 0x10a7) < chance * mult) items[n++] = makeItem(key); });
+  return items;
+}
+let container = null;   // { b, f, name, items }
+function openContainer(it) {
+  const s = bState(it.b);
+  container = { b: it.b, f: it.f, name: CONTAINERS[FURN[it.f.name].container].name, items: s.c[it.f.i] };
+  if (!invOpen) openInventory(); else layoutInventory();
+}
+function closeContainer() { container = null; if (invOpen) layoutInventory(); }
+function useItem(ref) {
+  const item = getItem(ref); if (!item) return;
+  if (item.use === 'bandage' || item.use === 'firstaid') {
+    // Treat the worst bleeding wound; a first aid kit also restores some health there.
+    let worst = null, wl = 0;
+    for (const p of BODY_PARTS) { const l = bleedLevel(p.id); if (l > wl) { wl = l; worst = p; } }
+    if (!worst && item.use === 'bandage') { flashMsg('Nothing is bleeding'); return; }
+    if (!worst) worst = BODY_PARTS.reduce((a, p) => player.parts[p.id] < player.parts[a.id] ? p : a, BODY_PARTS[0]);
+    const w = player.wounds[worst.id] || (player.wounds[worst.id] = { t: 0, clotted: false });
+    w.bandaged = true;
+    if (item.use === 'firstaid') player.parts[worst.id] = Math.min(100, player.parts[worst.id] + 25);
+    setItem(ref, null);
+    flashMsg((item.use === 'firstaid' ? 'Treated ' : 'Bandaged ') + worst.name.toLowerCase());
+  } else if (item.use === 'food' || item.use === 'drink') {
+    flashMsg((item.use === 'food' ? 'Hunger' : 'Thirst') + " isn't in the game yet");
+  } else flashMsg("Can't use that");
 }
 
 // ---- UI (menus) ---------------------------------------------------------------------------------
@@ -1433,8 +2048,10 @@ $('btn-save').onclick = () => { saveGame(); toast('Game saved'); };
 $('btn-quit').onclick = () => { saveGame(); showMenu(); };
 $('btn-dead-menu').onclick = () => showMenu();
 
+function e_pressedRecently() { return false; }
 function resume() { state = 'play'; ui.pause.classList.add('hidden'); }
 function onKeyPress(k) {
+  if (state === 'play' && k === 'e') { if (!e_pressedRecently()) pressInteract(); }
   if (state === 'play' && invOpen) {
     if (k === 'i' || k === 'escape' || k === 'tab') closeInventory();
     else if (k === 'm') { closeInventory(); openMap(); }
@@ -1470,7 +2087,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
-  zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory();
+  zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null;
   startPlaying();
   saveGame();
 }
@@ -1485,7 +2102,7 @@ function loadGame(n) {
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
   zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S';
-    for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy', 'speedMul']) if (z[k] != null) o[k] = z[k];
+    for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy', 'speedMul', 'home']) if (z[k] != null) o[k] = z[k];
     return o; });
   hordes = new Map(); nextHordeId = 1;
   for (const z of zombies) if (z.horde) {
@@ -1494,6 +2111,7 @@ function loadGame(n) {
   }
   zSpawnT = 8;
   inv = newInventory();
+  bstate.clear(); for (const [k, v] of Object.entries(s.bstate || {})) bstate.set(k, v);
   if (s.inv) { Object.assign(inv.equip, s.inv.equip || {}); inv.storage = s.inv.storage || inv.storage; fitStorage(); }
   startPlaying();
 }
@@ -1504,8 +2122,8 @@ function saveGame() {
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
-    zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
-    inv, explored: ex, markers,
+    zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, home: z.home, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    inv, explored: ex, markers, bstate: Object.fromEntries(bstate),
   }));
   lastAutosave = performance.now();
 }
@@ -1531,8 +2149,11 @@ function loop(now) {
     renderWorld(Math.round(menuCam.x), Math.round(menuCam.y), false);
   } else if (player) {
     if (state === 'play' || state === 'map') {
-      if (state === 'play') { updatePlayer(dt); updateAttack(dt); }
+      if (state === 'play') { updatePlayer(dt); updateAttack(dt); updateInteract(dt); }
       updateCorpses(dt);
+      checkResidents();
+      updateBanging(dt);
+      if (container && Math.hypot(player.x - ((container.b.x + container.f.x) * TILE + 16), player.y - ((container.b.y + container.f.y) * TILE + 20)) > 64) closeContainer();
       playTime += dt;
       updateZombies(dt);
       if (state === 'play' || state === 'map') updateBleeding(dt);
@@ -1593,6 +2214,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; },
+  startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

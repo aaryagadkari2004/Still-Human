@@ -66,6 +66,9 @@ right-click to remove one, C to re-centre.
 - Inventory: body health figure (parts turn red as they're hurt, hover for %), clothing slots
   (helmet, clothes, pants, shoes), primary and secondary weapon, backpack, and 6 storage slots.
   Backpacks add storage: small +3, medium +6, large +12. Drag items between slots; slots only accept the right kind of item.
+- Hunger and thirst bars under the health bar. Hunger empties in about 50 minutes and thirst in
+  about 30 (faster when running). At zero you start dying. Right-click food or drink to consume it:
+  canned beans, canned soup, bread, chips, water, soda and juice, each restoring different amounts.
 - Pixel health bar. Damage tints the screen redder the more you're hurt, and hits shake the camera.
 - 3 save slots, autosave every 2 minutes, permadeath (the save is deleted on death) and a game over screen.
 

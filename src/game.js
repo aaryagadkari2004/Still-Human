@@ -31,6 +31,24 @@ function loadImages() {
   })));
 }
 let waterPatterns = [];
+// Item icons: [sheet, column, row] on a 32 px grid, cropped to the drawn pixels.
+const ICONS = {
+  beans: ['itemsFood', 0, 0], soup: ['itemsFood', 1, 0], water: ['itemsFood', 2, 0], soda: ['itemsFood', 3, 0],
+  juice: ['itemsFood', 0, 1], chips: ['itemsFood', 1, 1], bread: ['itemsFood', 2, 1],
+};
+const iconCache = {};
+function iconFor(key) {
+  if (key in iconCache) return iconCache[key];
+  const def = ICONS[key]; if (!def || !IMG[def[0]]) return (iconCache[key] = null);
+  const [sheet, c, r] = def, t = document.createElement('canvas'); t.width = t.height = 32;
+  const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(IMG[sheet], c * 32, r * 32, 32, 32, 0, 0, 32, 32);
+  const d = g.getImageData(0, 0, 32, 32).data; let x0 = 32, y0 = 32, x1 = -1, y1 = -1;
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) if (d[(y * 32 + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  if (x1 < 0) return (iconCache[key] = null);
+  const out = document.createElement('canvas'); out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+  out.getContext('2d').drawImage(t, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+  return (iconCache[key] = out);
+}
 function prepareAssets() {
   waterPatterns = [0, 1, 2, 3].map(f => {
     const c = document.createElement('canvas'); c.width = c.height = TILE;
@@ -241,7 +259,7 @@ const BODY_PARTS = [
   { id: 'lFoot',  name: 'Left foot',  side: -1, mult: 0.9 },
 ];
 function newPlayer(x, y) {
-  const p = { x, y, dir: 'S', moving: false, running: false, anim: 0, parts: {}, wounds: {}, lastHit: null, lastHitT: 0 };
+  const p = { x, y, dir: 'S', moving: false, running: false, anim: 0, parts: {}, wounds: {}, lastHit: null, lastHitT: 0, hunger: 80, thirst: 75 };
   for (const b of BODY_PARTS) p.parts[b.id] = 100;
   Object.defineProperty(p, 'hp', {
     get() { let m = 100; for (const k in this.parts) m = Math.min(m, this.parts[k]); return m; },
@@ -1522,6 +1540,50 @@ function renderHurtOverlay() {
   ctx.fillRect(0, 0, w, h);
 }
 
+
+// ---- Hunger and thirst ---------------------------------------------------------------------------
+// Both drain over time (faster while running). Full to empty takes about 50 minutes for hunger
+// and 30 for thirst. Once either is empty you start losing health and will die without food/water.
+const HUNGER_TIME = 50 * 60, THIRST_TIME = 30 * 60;
+function updateNeeds(dt) {
+  if (player.god) return;
+  const effort = player.running ? 1.8 : player.moving ? 1.15 : 1;
+  player.hunger = Math.max(0, player.hunger - dt * 100 / HUNGER_TIME * effort);
+  player.thirst = Math.max(0, player.thirst - dt * 100 / THIRST_TIME * effort);
+  // Starving / dehydrating wears the body down (the torso takes it).
+  let drain = 0;
+  if (player.hunger <= 0) drain += 0.25;
+  if (player.thirst <= 0) drain += 0.45;
+  if (drain) {
+    player.parts.torso = Math.max(0, player.parts.torso - drain * dt);
+    if (player.parts.torso <= 0) startDying(player.thirst <= 0 ? 'You died of thirst.' : 'You starved to death.');
+  }
+}
+const DRUMSTICK = ['....##', '...###', '..####', '.####.', '##.#..', '#.....'];
+const WATERDROP = ['..#..', '..#..', '.###.', '#####', '#####', '.###.'];
+function renderNeedBar(y, value, icon, fill, hi, lo, iconCol) {
+  const x = 6, bx = x + 11, w = 64, h = 6;
+  const low = value < 20, blink = low && Math.floor(frameTime / 350) % 2 === 0;
+  bctx.fillStyle = '#000';
+  for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
+    icon.forEach((row, r) => { for (let c = 0; c < row.length; c++) if (row[c] === '#') bctx.fillRect(x + c + ox + 1, y + r + oy, 1, 1); });
+  icon.forEach((row, r) => { for (let c = 0; c < row.length; c++) if (row[c] === '#') { bctx.fillStyle = blink ? lo : iconCol; bctx.fillRect(x + c + 1, y + r, 1, 1); } });
+  bctx.fillStyle = '#000'; bctx.fillRect(bx - 1, y - 1, w + 2, h + 2);
+  bctx.fillStyle = '#171a14'; bctx.fillRect(bx, y, w, h);
+  const fw = Math.round(w * value / 100);
+  if (fw > 0) {
+    bctx.fillStyle = blink ? lo : fill; bctx.fillRect(bx, y, fw, h);
+    bctx.fillStyle = hi; bctx.fillRect(bx, y + 1, fw, 1);
+    bctx.fillStyle = lo; bctx.fillRect(bx, y + h - 1, fw, 1);
+  }
+  bctx.fillStyle = 'rgba(0,0,0,0.45)';
+  for (let i = 1; i < 10; i++) bctx.fillRect(bx + Math.round(w * i / 10), y, 1, h);
+}
+function renderNeeds() {
+  renderNeedBar(20, player.hunger, DRUMSTICK, '#c9873a', '#e8ad5e', '#7e4f1c', '#d99a52');
+  renderNeedBar(31, player.thirst, WATERDROP, '#3d86c6', '#6db3ea', '#1f4e7c', '#5aa6e6');
+}
+
 // ---- Minimap --------------------------------------------------------------------------------------
 const MM = 72; // minimap size in native pixels (1 px per tile)
 const MARKER_COLORS = ['#e8c547', '#e05a4f', '#5fb0e8', '#8be06a'];
@@ -1786,7 +1848,7 @@ function drawBody(g, now) {
 }
 const CAT_ABBR = { helmet: 'HLM', clothes: 'TOP', pants: 'PNT', shoes: 'SHO', weapon: 'WPN', backpack: 'BAG', misc: 'ITM' };
 function drawItemIcon(g, item, cx, cy, maxW, maxH) {
-  const img = item.icon && IMG[item.icon];
+  const img = iconFor(item.key) || (item.icon && IMG[item.icon]);
   if (img) {
     const s = Math.max(1, Math.floor(Math.min(maxW / img.width, maxH / img.height)));
     g.drawImage(img, Math.round(cx - img.width * s / 2), Math.round(cy - img.height * s / 2), img.width * s, img.height * s);
@@ -1946,9 +2008,14 @@ function closeInventory() {
 const ITEMS = {
   bandage:  { name: 'Bandage', cat: 'misc', abbr: 'BND', use: 'bandage' },
   firstaid: { name: 'First aid kit', cat: 'misc', abbr: 'AID', use: 'firstaid' },
-  beans:    { name: 'Canned beans', cat: 'misc', abbr: 'CAN', use: 'food' },
-  water:    { name: 'Water bottle', cat: 'misc', abbr: 'H2O', use: 'drink' },
-  soda:     { name: 'Soda', cat: 'misc', abbr: 'POP', use: 'drink' },
+  // Food and drink: how much hunger / thirst each restores (negative = makes it worse).
+  beans:    { name: 'Canned beans', cat: 'misc', abbr: 'CAN', use: 'eat', food: 32, drink: 2 },
+  soup:     { name: 'Canned soup', cat: 'misc', abbr: 'SUP', use: 'eat', food: 24, drink: 10 },
+  bread:    { name: 'Bread', cat: 'misc', abbr: 'BRD', use: 'eat', food: 22, drink: -2 },
+  chips:    { name: 'Chips', cat: 'misc', abbr: 'CHP', use: 'eat', food: 12, drink: -4 },
+  water:    { name: 'Water bottle', cat: 'misc', abbr: 'H2O', use: 'eat', food: 0, drink: 38 },
+  soda:     { name: 'Soda', cat: 'misc', abbr: 'POP', use: 'eat', food: 4, drink: 20 },
+  juice:    { name: 'Juice carton', cat: 'misc', abbr: 'JUC', use: 'eat', food: 6, drink: 26 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
   hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'AXE', weapon: 'hatchet' },
   beanie:   { name: 'Wool beanie', cat: 'helmet', abbr: 'HAT' },
@@ -1963,10 +2030,10 @@ const ITEMS = {
 function makeItem(key) { return { key, ...ITEMS[key] }; }
 // Each container rolls every line once: [item, chance]. Most finds are small.
 const CONTAINERS = {
-  fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['beans', 0.15]] },
-  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['beans', 0.15], ['knife', 0.18], ['bandage', 0.12], ['water', 0.15]] },
+  fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
+  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['bandage', 0.12], ['water', 0.15]] },
   dresser: { name: 'Dresser', slots: 6, loot: [['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['bandage', 0.1]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['hatchet', 0.06], ['bagM', 0.04], ['bagL', 0.015]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 WEAPONS.knife = { name: 'Kitchen knife', reach: 32, arc: 45, damage: [18, 26], cooldown: 0.48, duration: 0.32, hitAt: 0.16, knockback: 5, stun: 0.3 };
 WEAPONS.hatchet = { name: 'Hatchet', reach: 34, arc: 60, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 10, stun: 0.45 };
@@ -1997,8 +2064,12 @@ function useItem(ref) {
     if (item.use === 'firstaid') player.parts[worst.id] = Math.min(100, player.parts[worst.id] + 25);
     setItem(ref, null);
     flashMsg((item.use === 'firstaid' ? 'Treated ' : 'Bandaged ') + worst.name.toLowerCase());
-  } else if (item.use === 'food' || item.use === 'drink') {
-    flashMsg((item.use === 'food' ? 'Hunger' : 'Thirst') + " isn't in the game yet");
+  } else if (item.use === 'eat') {
+    const def = ITEMS[item.key] || item;
+    player.hunger = Math.max(0, Math.min(100, player.hunger + (def.food || 0)));
+    player.thirst = Math.max(0, Math.min(100, player.thirst + (def.drink || 0)));
+    setItem(ref, null);
+    flashMsg((def.food >= def.drink ? 'Ate ' : 'Drank ') + def.name.toLowerCase());
   } else flashMsg("Can't use that");
 }
 
@@ -2115,6 +2186,7 @@ function loadGame(n) {
   if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
+  player.hunger = s.player.hunger ?? 80; player.thirst = s.player.thirst ?? 75;
   zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S';
     for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy', 'speedMul', 'home']) if (z[k] != null) o[k] = z[k];
     return o; });
@@ -2135,7 +2207,7 @@ function saveGame() {
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
-    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
+    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds, hunger: Math.round(player.hunger * 10) / 10, thirst: Math.round(player.thirst * 10) / 10 },
     zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, home: z.home, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     inv, explored: ex, markers, bstate: Object.fromEntries(bstate),
   }));
@@ -2170,7 +2242,7 @@ function loop(now) {
       if (container && Math.hypot(player.x - ((container.b.x + container.f.x) * TILE + 16), player.y - ((container.b.y + container.f.y) * TILE + 20)) > 64) closeContainer();
       playTime += dt;
       updateZombies(dt);
-      if (state === 'play' || state === 'map') updateBleeding(dt);
+      if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }
       revealT -= dt;
       if (revealT <= 0) { revealAround(player.x, player.y); revealT = 0.2; }
       if (now - lastAutosave > 120000) saveGame();
@@ -2197,7 +2269,7 @@ function loop(now) {
   // HUD goes on top of the red overlay so it stays readable.
   if (player && (state === 'play' || state === 'pause')) {
     bctx.clearRect(0, 0, BW, BH);
-    renderMinimap(); renderHealthBar();
+    renderMinimap(); renderHealthBar(); renderNeeds();
     ctx.drawImage(buf, 0, 0, BW * scale, BH * scale);
   }
 
@@ -2227,7 +2299,7 @@ loadImages().then(() => {
 
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
-  giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
+  giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
   startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

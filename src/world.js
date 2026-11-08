@@ -45,7 +45,7 @@ const KINDS = [
   { name: 'log',     sx: 64,  sy: 128, sw: 64, sh: 32, ax: 32, ay: 28, cw: 56, ch: 11, rx: 28, ry: 4, low: true },
   { name: 'boulder', sx: 0,   sy: 128, sw: 64, sh: 64, ax: 32, ay: 60, cw: 54, ch: 20, rx: 29, ry: 7, tall: true },
   // Camp pieces (camp sheet). Crates are containers; the campfire animates its flame and smoke.
-  { name: 'tent',     img: 'camp', sx: 8,  sy: 22, sw: 48, sh: 36, ax: 24, ay: 34, cw: 42, ch: 14, rx: 23, ry: 5, tall: true },
+  { name: 'tent',     img: 'campTent', sx: 0, sy: 0, sw: 60, sh: 45, ax: 30, ay: 42, cw: 52, ch: 17, rx: 29, ry: 6, tall: true },
   { name: 'crateS',   img: 'camp', sx: 88, sy: 44, sw: 16, sh: 14, ax: 8,  ay: 12, cw: 12, ch: 6,  rx: 7,  ry: 2, low: true, crate: 'crateS' },
   { name: 'crateM',   img: 'camp', sx: 148, sy: 38, sw: 24, sh: 20, ax: 12, ay: 18, cw: 18, ch: 7, rx: 10, ry: 3, low: true, crate: 'crateM' },
   { name: 'crateL',   img: 'camp', sx: 208, sy: 32, sw: 32, sh: 26, ax: 16, ay: 24, cw: 28, ch: 9, rx: 15, ry: 3, crate: 'crateL' },

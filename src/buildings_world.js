@@ -176,7 +176,7 @@ function planCamp(gen, rx, ry, plan, rnd) {
     const SPOTS = [[0, -50], [44, -34], [52, 6], [40, 40], [0, 50], [-40, 40], [-52, 6], [-44, -34]];
     const tentSpot = Math.floor(rnd() * 8);
     const [tdx, tdy] = SPOTS[tentSpot];
-    const tentR = 1.25;  // the tent is wide: push it further out
+    const tentR = 1.4;  // the tent is wide: push it further out
     c.objects.push({ k: K.tent, x: Math.round(fx + tdx * tentR), y: Math.round(fy + tdy * tentR), camp: c });
     const r = rnd(), crates = r < 0.25 ? 0 : r < 0.65 ? 1 : r < 0.9 ? 2 : 3;
     const free = [2, 3, 4, 5, 6].map(d => (tentSpot + d) % 8);   // not right beside the tent

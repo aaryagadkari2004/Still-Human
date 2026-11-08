@@ -66,6 +66,11 @@ right-click to remove one, C to re-centre.
 - Bleeding: below 70% a part bleeds lightly (clots by itself after 30 s unless hit again),
   below 45% it bleeds steadily, and below 20% it bleeds severely. Bleeding drains that part
   until treated, leaves a blood trail, shows as drops next to the health bar, and pulses on the body figure.
+- Day and night: dawn (1.5 min), day (10 min), dusk (1.5 min), night (9 min), in real time while
+  playing. Dawn and dusk turn everything warm orange. At night you see clearly up close but the
+  distance fades to black; how dark it gets changes from night to night. Campfires, tents and houses
+  (through their windows and open doors) give off light, and the lights are on inside houses.
+  Zombies spawn a bit more often at night.
 - Wild animals roam the world (more in the woods):
   - Bears (forest only) are territorial: get within about 4 tiles and a bear faces you, then
     charges. They maul zombies that wander close too, and return to their spot after a chase.
@@ -119,6 +124,7 @@ src/world.js             world generation (noise, terrain, autotiling, objects)
 src/buildings_world.js   house floor plans and where hamlets and cabins go
 src/game.js              rendering, player, zombies, inventory, map, menus, saves
 src/animals.js           wild animals (inlined into game.js by the build)
+src/daynight.js          day/night cycle and lighting (inlined into game.js by the build)
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
 tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)

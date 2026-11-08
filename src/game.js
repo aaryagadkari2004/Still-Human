@@ -62,6 +62,9 @@ function iconFor(key) {
   return (iconCache[key] = out);
 }
 function prepareAssets() {
+  // Tents are drawn a little larger than on the camp sheet (1.25x, nearest-neighbour).
+  { const c = document.createElement('canvas'); c.width = 60; c.height = 45; const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+    g.drawImage(IMG.camp, 8, 22, 48, 36, 0, 0, 60, 45); IMG.campTent = c; }
   waterPatterns = [0, 1, 2, 3].map(f => {
     const c = document.createElement('canvas'); c.width = c.height = TILE;
     c.getContext('2d').drawImage(IMG.water, f * TILE, 0, TILE, TILE, 0, 0, TILE, TILE);
@@ -811,7 +814,7 @@ function updateZombies(dt) {
   for (const id of hordes.keys()) if (!alive.has(id)) hordes.delete(id);
   zSpawnT -= dt;
   if (zSpawnT <= 0) {
-    zSpawnT = 7 + Math.random() * 8;
+    zSpawnT = (7 + Math.random() * 8) / (1 + 0.4 * nightness());   // a bit more often at night
     const size = pickHordeSize();
     if (zombies.length + size <= Z_CAP) spawnGroup(size);
   }
@@ -821,6 +824,8 @@ function updateZombies(dt) {
 
 
 // {{ANIMALS}}
+
+// {{DAYNIGHT}}
 
 // ---- Bleeding ------------------------------------------------------------------------------------
 // A body part starts bleeding once its health drops below a threshold; the worse the wound, the
@@ -1782,7 +1787,7 @@ function renderWorld(camX, camY, withPlayer) {
   }
   if (withPlayer) { renderSwing(); renderInteractDots(); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (withPlayer) renderInsideDarkness(camX, camY);
+  if (withPlayer) { renderNight(camX, camY); renderInsideDarkness(camX, camY); }
 }
 
 
@@ -2383,7 +2388,7 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25]] },
   // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
   crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
   crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05]] },
@@ -2553,7 +2558,7 @@ function newGame(n) {
   slot = n;
   const seed = (Math.random() * 2 ** 32) >>> 0;
   world = new WorldGen(seed); resetCaches();
-  explored = new Map(); markers = []; playTime = 0; created = Date.now();
+  explored = new Map(); markers = []; playTime = 0; clock = START_CLOCK; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
   zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null; searching = null;
@@ -2574,7 +2579,7 @@ function loadGame(n) {
   world = new WorldGen(s.seed); resetCaches();
   player = newPlayer(s.player.x, s.player.y); player.dir = s.player.dir || 'S';
   explored = new Map(Object.entries(s.explored || {}).map(([k, v]) => [k, unpackBits(v)]));
-  markers = s.markers || []; playTime = s.playTime || 0; created = s.created || Date.now();
+  markers = s.markers || []; playTime = s.playTime || 0; clock = s.clock ?? START_CLOCK; created = s.created || Date.now();
   if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
@@ -2600,7 +2605,7 @@ function saveGame() {
   const ex = {};
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
-    v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
+    v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime), clock: Math.floor(clock),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds, hunger: Math.round(player.hunger * 10) / 10, thirst: Math.round(player.thirst * 10) / 10 },
     zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, home: z.home, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     animals: saveAnimals(),
@@ -2635,7 +2640,7 @@ function loop(now) {
       checkResidents();
       updateBanging(dt);
       if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
-      playTime += dt;
+      playTime += dt; clock += dt;
       updateZombies(dt);
       updateAnimals(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }
@@ -2697,6 +2702,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, get clock() { return clock; }, set clock(v) { clock = v; }, nightness, phaseName, dayNumber, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

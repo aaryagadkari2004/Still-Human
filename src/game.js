@@ -1694,8 +1694,9 @@ function renderWorld(camX, camY, withPlayer) {
       if (z.flash > 0) bctx.filter = 'brightness(2.4) saturate(0.3)';
       if (inWater(z.x, z.y)) {
         // Wading/swimming: the zombie sits lower and everything below the waterline is hidden.
-        const sink = 16, cut = 58 - 14;
-        bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, cut, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly) + sink, PF, cut - sink);
+        // Drawn at full size, just lower, and cut off at the waterline (no squashing).
+        const sink = 14, waterline = 7, visH = P_AY - waterline - sink;
+        bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, visH, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly) + sink, PF, visH);
       } else bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
       if (z.flash > 0) bctx.filter = 'none';
       if (inWater(z.x, z.y)) drawRipple(o.x, o.y - 7, 14);

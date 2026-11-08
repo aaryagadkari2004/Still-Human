@@ -39,10 +39,10 @@ const KINDS = [
   { name: 'bush1',   sx: 0,   sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 13, ry: 4 },
   { name: 'bush2',   sx: 32,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 13, ry: 4 },
   { name: 'bush3',   sx: 64,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 12, ry: 3 },
-  { name: 'rock',    sx: 96,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 22, ch: 9,  rx: 12, ry: 4 },
-  { name: 'stump',   sx: 128, sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 18, ch: 9,  rx: 13, ry: 4 },
+  { name: 'rock',    sx: 96,  sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 22, ch: 9,  rx: 12, ry: 4, low: true },
+  { name: 'stump',   sx: 128, sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 18, ch: 9,  rx: 13, ry: 4, low: true },
   { name: 'tall',    sx: 160, sy: 96,  sw: 32, sh: 32, ax: 16, ay: 28, cw: 0,  ch: 0,  rx: 0,  ry: 0 },
-  { name: 'log',     sx: 64,  sy: 128, sw: 64, sh: 32, ax: 32, ay: 28, cw: 56, ch: 11, rx: 28, ry: 4 },
+  { name: 'log',     sx: 64,  sy: 128, sw: 64, sh: 32, ax: 32, ay: 28, cw: 56, ch: 11, rx: 28, ry: 4, low: true },
   { name: 'boulder', sx: 0,   sy: 128, sw: 64, sh: 64, ax: 32, ay: 60, cw: 54, ch: 20, rx: 29, ry: 7, tall: true },
 ];
 const K = Object.fromEntries(KINDS.map((k, i) => [k.name, i]));

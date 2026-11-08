@@ -11,6 +11,8 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | --- | --- |
 | WASD / arrows | Move |
 | Shift | Run |
+| C | Crouch / stand (sneak: 60% speed, almost silent, zombies spot you from closer) |
+| Space | Jump (clear rocks, stumps and logs; a mid-air jump dodges a zombie's lunge) |
 | Left click | Attack toward the mouse (hold to keep swinging) |
 | X | Swap primary and secondary weapon |
 | E | Open/close doors; hold to search furniture |
@@ -69,6 +71,10 @@ right-click to remove one, C to re-centre.
   and unbroken windows block movement. Zombies find their way in through open doors and broken
   windows; 3 or more together can break doors and windows down (fewer can't). Some houses have
   zombies inside.
+- Swimming: walk into rivers and lakes to swim (half speed, splashy, can't attack or use things,
+  hunger drains faster). Zombies swim too, but slowly.
+- Clothing, headwear and backpacks in the jump, swim and crouch animations are generated from the
+  standing sprites by tools/make_wear_moves.py (no extra sheets to draw).
 - Healing (right-click to treat the worst wound, or drag onto a body part): cloth rag heals a little
   and slows bleeding; bandage heals more and stops it; first aid kit fully heals the part and stops
   it; antiseptic is kept for infection (coming later). Shirts, hoodies, jeans and beanies can be torn
@@ -100,6 +106,7 @@ src/game.js              rendering, player, zombies, inventory, map, menus, save
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
 tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)
+tools/make_wear_moves.py   builds worn-item frames for jump/swim/crouch (re-run when worn items change)
 tools/make_clothing_masks.py  finds the clothes on each zombie sheet so they can be recoloured
                          (run it for every new zombie sheet, check with --preview; add --hooded for hoods)
 index.html               the built game

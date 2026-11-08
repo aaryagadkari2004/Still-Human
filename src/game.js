@@ -228,8 +228,24 @@ function revealAround(px, py) {
 // ---- Collision ------------------------------------------------------------------------------
 const SHORE = 10; // pixels of walkable bank inside water edge tiles
 function rectsHit(ax0, ay0, ax1, ay1, bx0, by0, bx1, by1) { return ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0; }
-function blocked(x0, y0, x1, y1) {
-  for (let ty = Math.floor(y0 / TILE); ty <= Math.floor((y1 - 0.01) / TILE); ty++)
+// opt.water: can enter water (swimming). opt.low: can pass over low obstacles (mid-jump).
+function waterRect(tx, ty, e) {
+  let wx0 = tx * TILE, wy0 = ty * TILE, wx1 = wx0 + TILE, wy1 = wy0 + TILE;
+  if (e < 9) {
+    const col = e % 3, row = Math.floor(e / 3);
+    if (col === 0) wx0 += SHORE; if (col === 2) wx1 -= SHORE;
+    if (row === 0) wy0 += SHORE; if (row === 2) wy1 -= SHORE;
+  }
+  return [wx0, wy0, wx1, wy1];
+}
+function inWater(x, y) {
+  const tx = Math.floor(x / TILE), ty = Math.floor((y - 3) / TILE), { t, e } = tileAt(tx, ty);
+  if (t !== T_WATER) return false;
+  const [a, b, c, d] = waterRect(tx, ty, e);
+  return x > a && x < c && y - 3 > b && y - 3 < d;
+}
+function blocked(x0, y0, x1, y1, opt) {
+  if (!(opt && opt.water)) for (let ty = Math.floor(y0 / TILE); ty <= Math.floor((y1 - 0.01) / TILE); ty++)
     for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x1 - 0.01) / TILE); tx++) {
       const { t, e } = tileAt(tx, ty);
       if (t !== T_WATER) continue;
@@ -246,7 +262,7 @@ function blocked(x0, y0, x1, y1) {
   const cy0 = Math.floor((y0 - 32) / CPX), cy1 = Math.floor((y1 + 32) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     for (const o of getData(cx, cy).objects) {
-      const k = KINDS[o.k]; if (!k.cw) continue;
+      const k = KINDS[o.k]; if (!k.cw || (opt && opt.low && k.low)) continue;
       if (rectsHit(x0, y0, x1, y1, o.x - k.cw / 2, o.y - k.ch, o.x + k.cw / 2, o.y)) return true;
     }
   }
@@ -279,7 +295,7 @@ function newPlayer(x, y) {
   });
   return p;
 }
-function feetBlocked(x, y) { return blocked(x - FEET_W / 2, y - FEET_H, x + FEET_W / 2, y); }
+function feetBlocked(x, y, opt) { return blocked(x - FEET_W / 2, y - FEET_H, x + FEET_W / 2, y, opt); }
 
 function findSpawn(seedRand) {
   // Random spot far from the origin, then search outward for clear land.
@@ -305,6 +321,32 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
 window.addEventListener('blur', () => keys.clear());
 
+// Movement states: crouching (C), jumping (Space), swimming (automatic in water).
+const CROUCH_SPEED = 0.6, SWIM_SPEED = 0.5;
+const JUMP_TIME = 0.62, JUMP_AIR = [0.1, 0.5], JUMP_HEIGHT = 14;
+const MOVE_DIR = { S: 0, E: 1, N: 2, W: 3 };
+function jumpAirborne(p) { return p.jump && p.jump.t > JUMP_AIR[0] && p.jump.t < JUMP_AIR[1]; }
+function jumpHeight(p) {
+  if (!p.jump) return 0;
+  const t = (p.jump.t - JUMP_AIR[0]) / (JUMP_AIR[1] - JUMP_AIR[0]);
+  return t <= 0 || t >= 1 ? 0 : Math.round(Math.sin(Math.PI * t) * JUMP_HEIGHT);
+}
+function toggleCrouch() {
+  const p = player; if (!p || p.swimming || p.jump) return;
+  p.crouch = !p.crouch;
+}
+function startJump() {
+  const p = player; if (!p || p.jump || p.swimming || p.attack || (p.jumpCd || 0) > 0) return;
+  let vx = 0, vy = 0;
+  if (keys.has('w') || keys.has('arrowup')) vy -= 1;
+  if (keys.has('s') || keys.has('arrowdown')) vy += 1;
+  if (keys.has('a') || keys.has('arrowleft')) vx -= 1;
+  if (keys.has('d') || keys.has('arrowright')) vx += 1;
+  const len = Math.hypot(vx, vy) || 1, speed = (vx || vy) ? (keys.has('shift') ? RUN * 0.95 : WALK * 1.25) : 0;
+  p.crouch = false; p.crouchT = 0;
+  p.jump = { t: 0, vx: vx / len * speed, vy: vy / len * speed };
+  player.hunger = Math.max(0, player.hunger - 0.05);
+}
 function updatePlayer(dt) {
   let vx = 0, vy = 0;
   if (keys.has('w') || keys.has('arrowup')) vy -= 1;
@@ -312,27 +354,59 @@ function updatePlayer(dt) {
   if (keys.has('a') || keys.has('arrowleft')) vx -= 1;
   if (keys.has('d') || keys.has('arrowright')) vx += 1;
   const p = player;
+  p.jumpCd = Math.max(0, (p.jumpCd || 0) - dt);
+  p.swimming = !jumpAirborne(p) && inWater(p.x, p.y);
+  if (p.swimming) p.crouch = false;
+  // Running stands you up.
+  if (p.crouch && keys.has('shift') && (vx || vy)) p.crouch = false;
+  const ct = p.crouch ? 1 : 0;
+  p.crouchT = p.crouchT == null ? ct : p.crouchT + Math.sign(ct - p.crouchT) * Math.min(Math.abs(ct - p.crouchT), dt / 0.22);
+  // Low obstacles (rocks, logs, stumps) can be cleared mid-jump; if you land on one you can walk off it.
+  const opt = { water: true, low: jumpAirborne(p) || feetBlocked(p.x, p.y, { water: true }) };
+  if (p.jump) {
+    p.jump.t += dt;
+    const mx = p.jump.vx * dt, my = p.jump.vy * dt;
+    if (!feetBlocked(p.x + mx, p.y, opt)) p.x += mx;
+    if (!feetBlocked(p.x, p.y + my, opt)) p.y += my;
+    p.moving = false; p.running = false;
+    if (p.jump.t >= JUMP_TIME) {
+      p.jump = null; p.jumpCd = 0.25;
+      makeNoise(p.x, p.y, inWater(p.x, p.y) ? NOISE.swim : NOISE.land, true);
+    }
+    return;
+  }
   p.moving = vx !== 0 || vy !== 0;
-  p.running = p.moving && keys.has('shift');
+  p.running = p.moving && keys.has('shift') && !p.swimming && !p.crouch;
   if (p.moving) {
     if (p.attack) p.running = false;
-    const len = Math.hypot(vx, vy), sp = (p.running ? RUN : WALK) * dt * (p.attack ? (p.attack.w.heavy ? 0.3 : 0.5) : 1);
+    const base = p.swimming ? WALK * SWIM_SPEED : p.crouch ? WALK * CROUCH_SPEED : p.running ? RUN : WALK;
+    const len = Math.hypot(vx, vy), sp = base * dt * (p.attack ? (p.attack.w.heavy ? 0.3 : 0.5) : 1);
     const mx = vx / len * sp, my = vy / len * sp;
     if (p.attack) { /* keep facing the punch */ }
     else if (Math.abs(vx) > Math.abs(vy)) p.dir = vx > 0 ? 'E' : 'W';
     else if (Math.abs(vy) > Math.abs(vx)) p.dir = vy > 0 ? 'S' : 'N';
     else if (!((vx > 0 && p.dir === 'E') || (vx < 0 && p.dir === 'W') || (vy > 0 && p.dir === 'S') || (vy < 0 && p.dir === 'N'))) p.dir = vx > 0 ? 'E' : 'W';
-    if (!feetBlocked(p.x + mx, p.y)) p.x += mx;
-    if (!feetBlocked(p.x, p.y + my)) p.y += my;
-    p.anim += dt * (p.running ? 11 : 7);
+    if (!feetBlocked(p.x + mx, p.y, opt)) p.x += mx;
+    if (!feetBlocked(p.x, p.y + my, opt)) p.y += my;
+    p.anim += dt * (p.running ? 11 : p.swimming ? 5 : p.crouch ? 6 : 7);
   } else {
-    p.anim += dt * 3;
+    p.anim += dt * (p.swimming ? 3.5 : 3);
   }
 }
+// Returns [frame, row, sheet] — sheet 'moves' is the jump / swim / crouch sheet.
 function playerFrame(p) {
-  if (p.attack) return [Math.min(3, Math.floor(p.attack.t / p.attack.w.duration * 4)), PUNCH_ROW[p.dir]];
-  const f = Math.floor(p.anim) % 4;
-  return [f, p.moving ? DIR_ROW[p.dir] : IDLE_ROW[p.dir]];
+  if (p.attack) return [Math.min(3, Math.floor(p.attack.t / p.attack.w.duration * 4)), PUNCH_ROW[p.dir], 'base'];
+  const di = MOVE_DIR[p.dir], f = Math.floor(p.anim) % 4;
+  if (p.jump) {
+    const t = p.jump.t, jf = t < 0.1 ? 0 : t < 0.2 ? 1 : t < JUMP_AIR[1] ? 2 : 3;
+    return [jf, di, 'moves'];
+  }
+  if (p.swimming) return [f, 4 + di, 'moves'];
+  if (p.crouchT > 0) {
+    if (p.crouchT < 1) return [Math.min(3, Math.floor(p.crouchT * 4)), 8 + di, 'moves'];
+    return p.moving ? [f, 12 + di, 'moves'] : [3, 8 + di, 'moves'];
+  }
+  return [f, p.moving ? DIR_ROW[p.dir] : IDLE_ROW[p.dir], 'base'];
 }
 
 // ---- Player health & hurt effects -----------------------------------------------------------
@@ -375,6 +449,7 @@ function hurtPlayer(amount, cause, fromX, fromY) {
   if (state !== 'play' && state !== 'map') return;
   if (state === 'map') closeMap();
   if (player.god) return;
+  if (fromX != null && jumpAirborne(player)) return;   // jumped clear of the lunge
   const part = fromX != null ? pickHitPart(fromX, fromY) : BODY_PARTS[1];
   let dmg = amount * part.mult * (0.8 + Math.random() * 0.4);
   // Worn gear stops part of the damage to the body part it covers.
@@ -518,10 +593,10 @@ function moveZombie(z, vx, vy, speed, dt) {
   const len = Math.hypot(vx, vy); if (len < 0.001) { z.moving = false; return; }
   let ux = vx / len, uy = vy / len;
   if (z.detour > 0) { z.detour -= dt; ux = z.dx; uy = z.dy; }
-  const sp = speed * dt;
+  const sp = speed * dt * (inWater(z.x, z.y) ? 0.45 : 1);   // zombies swim, slowly
   const ox = z.x, oy = z.y;
   const tryMove = (nx, ny) => {
-    if (feetBlocked(nx, ny)) return false;
+    if (feetBlocked(nx, ny, { water: true })) return false;
     const zr = ZOMBIE_TYPES[z.type].radius;
     if (Math.hypot(nx - player.x, ny - player.y) < 13.5 + zr) return false;          // don't walk into the player
     for (const o of zombies) {
@@ -810,7 +885,8 @@ function mouseWorld() { return [camWorldX + mouse.x / scale, camWorldY + mouse.y
 function aimDir(dx, dy) { return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N'); }
 function startAttack() {
   const p = player;
-  if (p.attack || p.attackCd > 0) return;
+  if (p.attack || p.attackCd > 0 || p.swimming || p.jump) return;
+  if (p.crouch) p.crouch = false;   // swinging stands you up
   const [wx, wy] = mouseWorld();
   // Aim from the player's chest, not their feet.
   const ax = wx - p.x, ay = wy - (p.y - 22);
@@ -1384,7 +1460,7 @@ function findInteract() {
   return best;
 }
 function updateInteract(dt) {
-  interact = findInteract();
+  interact = player.swimming || player.jump ? null : findInteract();
   if (interact && interact.type === 'search' && keys.has('e')) {
     const s = bState(interact.b);
     if (s.c[interact.f.i]) { if (searchT >= 0) { openContainer(interact); makeNoise(interact.x, interact.y + 12, NOISE.search * 0.6, true); } searchT = -1; return; }
@@ -1428,6 +1504,9 @@ function renderInteractPrompt(camX, camY) {
 // away they heard it, the vaguer their idea of where). Walls muffle sound going in or out.
 const NOISE = {
   walk: 2.5,      // footsteps: quiet
+  crouch: 0.8,    // sneaking: almost silent
+  swim: 4,        // splashing
+  land: 3.5,      // landing from a jump
   run: 7,         // running: carries a fair way
   punch: 4,       // a fight
   door: 8,        // opening or closing a door
@@ -1453,7 +1532,9 @@ let stepNoiseT = 0;
 function updatePlayerNoise(dt) {
   stepNoiseT -= dt;
   if (!player.moving || stepNoiseT > 0) return;
-  if (player.running) { makeNoise(player.x, player.y, NOISE.run, true); stepNoiseT = 0.45; }
+  if (player.swimming) { makeNoise(player.x, player.y, NOISE.swim, true); stepNoiseT = 0.8; }
+  else if (player.crouch) { makeNoise(player.x, player.y, NOISE.crouch, true); stepNoiseT = 0.9; }
+  else if (player.running) { makeNoise(player.x, player.y, NOISE.run, true); stepNoiseT = 0.45; }
   else { makeNoise(player.x, player.y, NOISE.walk, true); stepNoiseT = 0.7; }
 }
 // Can a zombie outside see into the player's house? Only through a window or an open doorway
@@ -1474,9 +1555,11 @@ function seesThroughOpening(z, pb) {
 }
 // Zombies notice what's in front of them; up close they notice you from any direction.
 function inView(z, dx, dy, d, T) {
-  if (d < 3 * TILE || z.mode === 'chase' || z.mode === 'bang' || z.mode === 'attack') return d < T.sight;
+  // A crouching player is only spotted from about 60% as far, and has to be closer to be noticed from behind.
+  const sight = T.sight * (player.crouch ? 0.6 : 1), near = (player.crouch ? 2 : 3) * TILE;
+  if (d < near || z.mode === 'chase' || z.mode === 'bang' || z.mode === 'attack') return d < sight;
   const f = DIR_VEC[z.dir];
-  return d < T.sight && (dx * f[0] + dy * f[1]) / d > 0.35;   // roughly a 140° cone
+  return d < sight && (dx * f[0] + dy * f[1]) / d > 0.35;   // roughly a 140° cone
 }
 
 // ---- World rendering ---------------------------------------------------------------------------
@@ -1486,6 +1569,13 @@ function drawShadow(x, y, rx, ry) {
   bctx.beginPath();
   bctx.ellipse(Math.round(x + rx * 0.25), Math.round(y - 1), rx, ry, 0, 0, Math.PI * 2);
   bctx.fill();
+}
+function drawRipple(x, y, r) {
+  const w = r + Math.sin(frameTime / 260) * 1.5;
+  bctx.strokeStyle = 'rgba(205,230,235,0.45)'; bctx.lineWidth = 1;
+  bctx.beginPath(); bctx.ellipse(Math.round(x), Math.round(y), w, w * 0.32, 0, 0.05 * Math.PI, 0.95 * Math.PI); bctx.stroke();
+  bctx.strokeStyle = 'rgba(205,230,235,0.2)';
+  bctx.beginPath(); bctx.ellipse(Math.round(x), Math.round(y), w + 4, (w + 4) * 0.32, 0, 0.1 * Math.PI, 0.9 * Math.PI); bctx.stroke();
 }
 function renderWorld(camX, camY, withPlayer) {
   const frame = Math.floor(frameTime / 450) % 4;
@@ -1514,7 +1604,8 @@ function renderWorld(camX, camY, withPlayer) {
   collectBuildings(camX, camY, items);
   if (withPlayer) { renderBlood(camX, camY, frameTime); renderCorpses(camX, camY); }
   if (withPlayer) {
-    items.push({ k: -1, x: player.x, y: player.y });
+    // Mid-jump the player is drawn in front of whatever they're jumping over.
+    items.push({ k: -1, x: player.x, y: player.y + (jumpHeight(player) > 2 ? 30 : 0) });
     for (const z of zombies) {
       if (z.x < camX - 40 || z.x > camX + BW + 40 || z.y < camY - 8 || z.y > camY + BH + 64) continue;
       items.push({ k: -2, x: z.x, y: z.y, z });
@@ -1526,6 +1617,8 @@ function renderWorld(camX, camY, withPlayer) {
   for (const o of items) {
     if (o.k <= -3) continue;
     if (o.k === -2 && ZOMBIE_TYPES[o.z.type].shadow) drawShadow(o.x, o.y, ...ZOMBIE_TYPES[o.z.type].shadow);
+    else if (o.k === -1) { if (!player.swimming) { const h = jumpHeight(player); drawShadow(player.x, player.y, 9 - h * 0.25, 3 - h * 0.08); } }
+    else if (o.k === -2) { if (!inWater(o.x, o.y)) drawShadow(o.x, o.y, 9, 3); }
     else if (o.k < 0) drawShadow(o.x, o.y, 9, 3);
     else { const k = KINDS[o.k]; drawShadow(o.x, o.y, k.rx, k.ry); }
   }
@@ -1534,13 +1627,17 @@ function renderWorld(camX, camY, withPlayer) {
   for (const o of items) {
     if (o.k <= -3) { drawBuildingItem(o); continue; }
     if (o.k === -1) {
-      const [fx, fy] = playerFrame(player);
-      bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
-      // Worn gear is drawn on top, frame for frame.
+      const [fx, fy, sheet] = playerFrame(player);
+      const moves = sheet === 'moves', lift = jumpHeight(player);
+      const dx = Math.round(player.x - P_AX), dy = Math.round(player.y - P_AY) - lift;
+      bctx.drawImage(moves ? IMG.playerMoves : IMG.player, fx * PF, fy * PF, PF, PF, dx, dy, PF, PF);
+      // Worn gear is drawn on top, frame for frame (the jump/swim/crouch frames are generated).
       for (const slot of ['clothes', 'backpack', 'helmet']) {
         const it = inv.equip[slot], def = it && (ITEMS[it.key] || it);
-        if (def && def.wear && IMG[def.wear]) bctx.drawImage(IMG[def.wear], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
+        const img = def && def.wear && IMG[def.wear + (moves ? 'Moves' : '')];
+        if (img) bctx.drawImage(img, fx * PF, fy * PF, PF, PF, dx, dy, PF, PF);
       }
+      if (player.swimming) drawRipple(player.x, player.y - 7, 13);
       continue;
     }
     if (o.k === -2) {
@@ -1551,8 +1648,13 @@ function renderWorld(camX, camY, withPlayer) {
       const z = o.z;
       if (z.stun > 0) { const v = { N: [0, 2], S: [0, -2], E: [-2, 0], W: [2, 0] }[z.dir]; lx += v[0]; ly += v[1]; }
       if (z.flash > 0) bctx.filter = 'brightness(2.4) saturate(0.3)';
-      bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
+      if (inWater(z.x, z.y)) {
+        // Wading/swimming: the zombie sits lower and everything below the waterline is hidden.
+        const sink = 16, cut = 58 - 14;
+        bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, cut, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly) + sink, PF, cut - sink);
+      } else bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
       if (z.flash > 0) bctx.filter = 'none';
+      if (inWater(z.x, z.y)) drawRipple(o.x, o.y - 7, 14);
       continue;
     }
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
@@ -1642,7 +1744,7 @@ function renderHurtOverlay() {
 const HUNGER_TIME = 50 * 60, THIRST_TIME = 30 * 60;
 function updateNeeds(dt) {
   if (player.god) return;
-  const effort = player.running ? 1.8 : player.moving ? 1.15 : 1;
+  const effort = player.swimming ? 1.8 : player.running ? 1.8 : player.moving ? 1.15 : 1;
   player.hunger = Math.max(0, player.hunger - dt * 100 / HUNGER_TIME * effort);
   player.thirst = Math.max(0, player.thirst - dt * 100 / THIRST_TIME * effort);
   // Starving / dehydrating wears the body down (the torso takes it).
@@ -2299,6 +2401,8 @@ function e_pressedRecently() { return false; }
 function resume() { state = 'play'; ui.pause.classList.add('hidden'); }
 function onKeyPress(k) {
   if (state === 'play' && k === 'e') { if (!e_pressedRecently()) pressInteract(); }
+  if (state === 'play' && k === 'c') toggleCrouch();
+  if (state === 'play' && k === ' ' && !invOpen) startJump();
   if (state === 'play' && invOpen) {
     if (k === 'i' || k === 'escape' || k === 'tab') closeInventory();
     else if (k === 'm') { closeInventory(); openMap(); }

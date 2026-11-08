@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Still Human</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0c08; overflow: hidden; }
+  body { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: #d9d4b4; user-select: none; }
+  #game { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hidden { display: none !important; }
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+  #menu { background: radial-gradient(ellipse at center, rgba(8,9,5,0.35) 0%, rgba(8,9,5,0.85) 75%); }
+  h1 { margin: 0; font-size: clamp(40px, 7vw, 84px); letter-spacing: 0.18em; color: #e6e0bd; text-shadow: 4px 4px 0 #000, 0 0 24px rgba(0,0,0,0.6); font-weight: 800; }
+  .tag { margin-top: -14px; font-size: 13px; letter-spacing: 0.35em; color: #9c9774; text-transform: uppercase; text-shadow: 2px 2px 0 #000; }
+  #slots { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+  .slot { width: 240px; padding: 16px; background: rgba(16,17,11,0.92); border: 2px solid #4a4935; box-shadow: 4px 4px 0 #000; display: flex; flex-direction: column; gap: 8px; }
+  .slot.empty { border-style: dashed; border-color: #3a392a; }
+  .slot-title { font-weight: 700; font-size: 15px; color: #e6e0bd; }
+  .slot-info { font-size: 12px; color: #9c9774; min-height: 30px; }
+  .slot-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .warn { font-size: 12px; color: #e0a24f; width: 100%; }
+  button { font: inherit; font-size: 13px; font-weight: 700; padding: 8px 14px; cursor: pointer; color: #15160e; background: #c9c08a; border: 2px solid #000; box-shadow: 3px 3px 0 #000; }
+  button:hover { background: #e6dca0; }
+  button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #000; }
+  button.ghost { background: transparent; color: #9c9774; border-color: #4a4935; box-shadow: none; }
+  button.ghost:hover { color: #e6e0bd; border-color: #9c9774; }
+  button.danger { background: #b5473c; color: #fff; }
+  .panel { background: rgba(16,17,11,0.94); border: 2px solid #4a4935; box-shadow: 6px 6px 0 #000; padding: 28px 34px; display: flex; flex-direction: column; gap: 12px; min-width: 260px; text-align: center; }
+  .panel h2 { margin: 0 0 6px; letter-spacing: 0.2em; font-size: 22px; }
+  #pause, #dead { background: rgba(5,6,3,0.6); }
+  #dead { background: rgba(40,4,2,0.75); }
+  #dead h2 { color: #e05a4f; font-size: 30px; }
+  #hint { position: fixed; left: 14px; bottom: 12px; font-size: 12px; color: #d9d4b4; text-shadow: 1px 1px 0 #000, 0 0 6px #000; transition: opacity 2s; line-height: 1.7; }
+  #hint.fade { opacity: 0; }
+  #hint b, #maphelp b { color: #e8c547; }
+  #maphelp { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; font-size: 12px; background: rgba(16,17,11,0.9); border: 2px solid #4a4935; padding: 8px 14px; display: flex; gap: 14px; align-items: center; white-space: nowrap; }
+  #mapcolor { display: inline-block; width: 12px; height: 12px; border: 2px solid #000; vertical-align: middle; }
+  #maptitle { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); font-size: 14px; letter-spacing: 0.3em; color: #9c9774; }
+  #debug { position: fixed; top: 8px; left: 10px; font-size: 11px; color: #fff; text-shadow: 1px 1px 0 #000; }
+  #toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); padding: 8px 16px; background: rgba(16,17,11,0.94); border: 2px solid #4a4935; font-size: 13px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; letter-spacing: 0.3em; color: #9c9774; }
+  .foot { position: fixed; bottom: 12px; font-size: 11px; color: #6b6a4e; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="loading">LOADING…</div>
+
+<div id="menu" class="screen hidden">
+  <h1>STILL HUMAN</h1>
+  <div class="tag">Every world is new. Every death is final.</div>
+  <div id="slots"></div>
+  <div class="foot">Build {{BUILD}}</div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="panel">
+    <h2>PAUSED</h2>
+    <button id="btn-resume">Resume</button>
+    <button id="btn-save">Save</button>
+    <button id="btn-quit" class="ghost">Save &amp; quit to menu</button>
+  </div>
+</div>
+
+<div id="dead" class="screen hidden">
+  <div class="panel">
+    <h2>YOU DIED</h2>
+    <div id="dead-cause"></div>
+    <div id="dead-time"></div>
+    <button id="btn-dead-menu">Main menu</button>
+  </div>
+</div>
+
+<div id="hint" class="hidden"><b>WASD</b> move · <b>Shift</b> run · <b>M</b> map · <b>Esc</b> pause</div>
+
+<div id="maphelp" class="hidden">
+  <span><b>Drag</b> pan</span><span><b>Wheel</b> zoom</span>
+  <span><b>Click</b> add marker <span id="mapcolor"></span> <b>1–4</b> colour</span>
+  <span><b>Right-click</b> remove</span><span><b>C</b> centre</span><span><b>M</b> close</span>
+</div>
+
+<div id="debug" class="hidden"></div>
+<div id="toast"></div>
+
+<script>
+const ASSETS = {{ASSETS}};
+</script>
+<script>
+{{WORLD}}
+</script>
+<script>
+{{GAME}}
+</script>
+</body>
+</html>

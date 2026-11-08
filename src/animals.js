@@ -7,24 +7,28 @@
 //   raccoon  passive; sneaks up to crates left outside (camp crates) and runs off with something
 // All of them can be killed. Bodies stay on the ground (hunting will let you butcher them later).
 const ANIMAL_TYPES = {
-  bear:    { name: 'Bear',    img: 'animalBear',    hp: 320, walk: 24, run: 126, radius: 14, shadow: [17, 4], animRate: 3,
+  bear:    { name: 'Bear',    img: 'animalBear', death: 'animalBearDeath', attack: 'animalBearAttack',    hp: 320, walk: 24, run: 126, radius: 14, shadow: [17, 4], animRate: 3,
              kind: 'territorial', territory: 4.5 * TILE, leash: 12 * TILE, damage: 30, zDamage: 55, reach: 36, windup: 0.5, cooldown: 1.3, shove: 16,
              knockMul: 0.15, stunMul: 0.2, cause: 'Mauled by a bear.' },
-  moose:   { name: 'Moose',   img: 'animalMoose',   hp: 380, walk: 22, run: 112, radius: 15, shadow: [18, 4], animRate: 2.8,
+  moose:   { name: 'Moose',   img: 'animalMoose', death: 'animalMooseDeath', attack: 'animalMooseAttack',   hp: 380, walk: 22, run: 112, radius: 15, shadow: [18, 4], animRate: 2.8,
              kind: 'defensive', angerTime: 18, damage: 34, zDamage: 50, reach: 38, windup: 0.6, cooldown: 1.6, shove: 22,
              knockMul: 0.12, stunMul: 0.2, cause: 'Trampled by a moose.' },
-  deer:    { name: 'Deer',    img: 'animalDeer',    hp: 60,  walk: 26, run: 160, radius: 9,  shadow: [12, 3], animRate: 3.4,
+  deer:    { name: 'Deer',    img: 'animalDeer', death: 'animalDeerDeath',    hp: 60,  walk: 26, run: 160, radius: 9,  shadow: [12, 3], animRate: 3.4,
              kind: 'skittish', fear: 7 * TILE, knockMul: 0.5, stunMul: 0.5 },
-  rabbit:  { name: 'Rabbit',  img: 'animalRabbit',  hp: 10,  walk: 20, run: 150, radius: 4,  shadow: [5, 2],  animRate: 6,
+  rabbit:  { name: 'Rabbit',  img: 'animalRabbit', death: 'animalRabbitDeath',  hp: 10,  walk: 20, run: 150, radius: 4,  shadow: [5, 2],  animRate: 6,
              kind: 'skittish', fear: 3.5 * TILE, knockMul: 1, stunMul: 1 },
-  raccoon: { name: 'Raccoon', img: 'animalRaccoon', hp: 24,  walk: 22, run: 112, radius: 7,  shadow: [9, 2],  animRate: 5,
+  raccoon: { name: 'Raccoon', img: 'animalRaccoon', death: 'animalRaccoonDeath', hp: 24,  walk: 22, run: 112, radius: 7,  shadow: [9, 2],  animRate: 5,
              kind: 'thief', fear: 2.5 * TILE, knockMul: 0.8, stunMul: 0.8 },
 };
 const A_CAP = 8;                   // most animals around the player at once
 const BEAR_GAP = 50 * TILE;        // bears keep well apart from each other
 const RACCOON_STEAL_CHANCE = 0.6;  // chance a raccoon actually takes something from a crate it rummages in
 const RUMMAGE_TIME = 3;
-const A_ANCHOR = 60;               // the animals' feet sit at y=60 in their 64px frames
+const A_ANCHOR = 60;
+// Death and attack sheets: 4 frames per row, one row per facing.
+const A_DIR4_ROW = { S: 0, E: 1, N: 2, W: 3 };
+const A_DEATH_TIME = 0.6;          // seconds for the 4-frame collapse
+const A_STRIKE_HOLD = 0.2;         // the impact frame stays up a moment after the blow lands               // the animals' feet sit at y=60 in their 64px frames
 let animals = [];
 let aSpawnT = 4;
 
@@ -85,6 +89,7 @@ function updateAnimal(a, dt) {
   const T = ANIMAL_TYPES[a.sp];
   if (a.flash > 0) a.flash -= dt;
   a.cd = Math.max(0, a.cd - dt);
+  if (a.strikeT > 0) a.strikeT -= dt;
   if (a.stun > 0) { a.stun -= dt; a.moving = false; return; }
   a.moving = false;
 
@@ -142,7 +147,7 @@ function updateAnimal(a, dt) {
       a.atk -= dt;
       if (tgt) faceToward(a, tgt.x - a.x, tgt.y - a.y);
       if (a.atk > 0) break;
-      a.cd = T.cooldown; a.mode = 'charge';
+      a.cd = T.cooldown; a.mode = 'charge'; a.strikeT = A_STRIKE_HOLD;
       if (tgtGone) break;
       const dx = tgt.x - a.x, dy = tgt.y - a.y, d = Math.hypot(dx, dy) || 1;
       if (d > T.reach + 14 + (tgt === player ? 0 : ZOMBIE_TYPES[tgt.type].radius)) break;
@@ -247,9 +252,9 @@ function hitAnimal(a, W, ang) {
 function killAnimal(a, ang) {
   const T = ANIMAL_TYPES[a.sp];
   a.dead = true; a.moving = false;
-  const side = Math.cos(ang) >= 0 ? 1 : -1;
-  corpses.push({ animal: a.sp, x: a.x, y: a.y, sheet: IMG[T.img], fx: 0, fy: a.dir === 'W' || (a.dir !== 'E' && side < 0) ? IDLE_ROW.W : IDLE_ROW.E,
-    side, kx: Math.cos(ang) * 3, ky: Math.sin(ang) * 2, t: 0, pool: T.radius * 0.7 + 2, loot: a.loot });
+  // Plays the animal's own collapse animation for the way it was facing.
+  corpses.push({ animal: a.sp, x: a.x, y: a.y, sheet: IMG[T.death], fx: 0, fy: A_DIR4_ROW[a.dir],
+    side: 0, kx: Math.cos(ang) * 3, ky: Math.sin(ang) * 2, t: 0, pool: T.radius * 0.7 + 2, loot: a.loot });
   if (corpses.length > CORPSE_MAX) corpses.shift();
   for (let i = 0; i < Math.ceil(T.radius / 2); i++) blood.push({ x: a.x + (Math.random() * 2 - 1) * T.radius, y: a.y - 2 + Math.random() * 5, t: performance.now(), s: 3 });
 }
@@ -335,17 +340,20 @@ function updateAnimals(dt) {
   }
   for (const a of animals) updateAnimal(a, dt);
 }
+// Returns [frame, row, sheet].
 function animalFrame(a) {
-  const f = Math.floor(a.anim) % 4;
-  if (a.mode === 'maul') return [Math.max(0, Math.min(3, Math.floor((1 - a.atk / ANIMAL_TYPES[a.sp].windup) * 3.99))), DIR_ROW[a.dir]];
-  return [f, a.moving ? DIR_ROW[a.dir] : IDLE_ROW[a.dir]];
+  const T = ANIMAL_TYPES[a.sp], f = Math.floor(a.anim) % 4;
+  if (T.attack) {
+    // Wind-up runs through frames 0-2; frame 3 is the blow, held for a moment after it lands.
+    if (a.mode === 'maul') return [Math.max(0, Math.min(2, Math.floor((1 - a.atk / T.windup) * 3))), A_DIR4_ROW[a.dir], T.attack];
+    if (a.strikeT > 0) return [3, A_DIR4_ROW[a.dir], T.attack];
+  }
+  return [f, a.moving ? DIR_ROW[a.dir] : IDLE_ROW[a.dir], T.img];
 }
 function drawAnimal(a) {
-  const [fx, fy] = animalFrame(a);
-  let lx = 0, ly = 0;
-  if (a.mode === 'maul' && a.atk < 0.15) { const v = DIR_VEC[a.dir]; lx = v[0] * 4; ly = v[1] * 4; }
+  const [fx, fy, sheet] = animalFrame(a);
   if (a.flash > 0) bctx.filter = 'brightness(2.4) saturate(0.3)';
-  bctx.drawImage(IMG[ANIMAL_TYPES[a.sp].img], fx * PF, fy * PF, PF, PF, Math.round(a.x - 32 + lx), Math.round(a.y - A_ANCHOR + ly), PF, PF);
+  bctx.drawImage(IMG[sheet], fx * PF, fy * PF, PF, PF, Math.round(a.x - 32), Math.round(a.y - A_ANCHOR), PF, PF);
   if (a.flash > 0) bctx.filter = 'none';
 }
 function saveAnimals() {

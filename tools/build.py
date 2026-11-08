@@ -81,6 +81,13 @@ ASSETS = {
     "animalDeer": "animal_deer_v1.png",
     "animalRabbit": "animal_rabbit_v1.png",
     "animalRaccoon": "animal_raccoon_v1.png",
+    "animalBearDeath": "animal_bear_death_v1.png",
+    "animalMooseDeath": "animal_moose_death_v1.png",
+    "animalDeerDeath": "animal_deer_death_v1.png",
+    "animalRabbitDeath": "animal_rabbit_death_v1.png",
+    "animalRaccoonDeath": "animal_raccoon_death_v1.png",
+    "animalBearAttack": "animal_bear_attack_v1.png",
+    "animalMooseAttack": "animal_moose_attack_v1.png",
     "bodyLabels": "body_labels.png",
 }
 

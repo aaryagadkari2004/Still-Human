@@ -74,7 +74,8 @@ right-click to remove one, C to re-centre.
     get closer.
   - Raccoons are passive and sneak up to camp crates when nobody is near, sometimes running off with
     something from inside.
-  - All of them can be killed and leave a body (hunting and drops are coming later).
+  - All of them can be killed: each plays its own collapse animation and leaves a body (hunting and
+    drops are coming later). Bears and moose have their own attack animations.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,
   with flickering flame and drifting smoke) and none, one or a few crates (small, medium, large)
   holding canned food, water, medical supplies and camping gear. Click a crate to search it.

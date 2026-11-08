@@ -1032,14 +1032,9 @@ function renderCorpses(camX, camY) {
     bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 20 * lie), Math.round(by), Math.round(9 + 16 * lie), Math.round(3 + 2 * lie), 0, 0, Math.PI * 2); bctx.fill();
     bctx.globalAlpha = fade;
     if (c.animal) {
-      // Animals' legs give way: the body sinks and tips slightly onto its side.
-      const p = Math.min(1, c.t / 0.45), e = p * p, sq = 1 - 0.38 * e;
-      bctx.save();
-      bctx.translate(Math.round(bx), Math.round(by));
-      bctx.rotate(c.side * 0.14 * e);
-      bctx.scale(1, sq);
-      bctx.drawImage(c.sheet, c.fx * PF, c.fy * PF, PF, PF, -32, -A_ANCHOR, PF, PF);
-      bctx.restore();
+      // Animals play their own 4-frame collapse, then stay on the last frame.
+      const f = Math.min(3, Math.floor(c.t / A_DEATH_TIME * 4));
+      bctx.drawImage(c.sheet, f * PF, c.fy * PF, PF, PF, Math.round(bx - 32), Math.round(by - A_ANCHOR), PF, PF);
       bctx.globalAlpha = 1;
       continue;
     }

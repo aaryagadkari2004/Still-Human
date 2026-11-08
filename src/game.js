@@ -607,6 +607,11 @@ function moveZombie(z, vx, vy, speed, dt) {
       const rr = zr + ZOMBIE_TYPES[o.type].radius;
       if (Math.hypot(nx - o.x, ny - o.y) < rr && Math.hypot(z.x - o.x, z.y - o.y) >= rr) return false;
     }
+    for (const o of animals) {
+      if (o.dead || Math.abs(nx - o.x) > 30 || Math.abs(ny - o.y) > 30) continue;
+      const rr = zr + ANIMAL_TYPES[o.sp].radius;
+      if (Math.hypot(nx - o.x, ny - o.y) < rr && Math.hypot(z.x - o.x, z.y - o.y) >= rr) return false;
+    }
     return true;
   };
   if (tryMove(z.x + ux * sp, z.y)) z.x += ux * sp;
@@ -815,6 +820,8 @@ function updateZombies(dt) {
 }
 
 
+// {{ANIMALS}}
+
 // ---- Bleeding ------------------------------------------------------------------------------------
 // A body part starts bleeding once its health drops below a threshold; the worse the wound, the
 // faster it bleeds (health % lost per second). Light bleeding clots on its own after a while
@@ -926,17 +933,20 @@ function updateAttack(dt) {
   a.t += dt;
   if (!a.hit && a.t >= W.hitAt) {
     a.hit = true;
-    // Hit the closest zombie inside the weapon's reach and swing arc.
-    let best = null, bd = Infinity;
-    for (const z of zombies) {
-      if (z.dead) continue;
+    // Hit the closest zombie or animal inside the weapon's reach and swing arc.
+    let best = null, bd = Infinity, isAnimal = false;
+    const consider = (z, extra, an) => {
+      if (z.dead) return;
       const dx = z.x - p.x, dy = z.y - p.y, d = Math.hypot(dx, dy);
-      if (d > W.reach + 8) continue;
+      if (d > W.reach + 8 + extra) return;
       let da = Math.abs(Math.atan2(dy, dx) - a.ang); if (da > Math.PI) da = Math.PI * 2 - da;
-      if (da > W.arc * Math.PI / 180 && d > 12) continue;
-      if (d < bd) { bd = d; best = z; }
-    }
-    if (best) { hitZombie(best, W, a.ang); makeNoise(p.x, p.y, W.noise || NOISE.punch, true); }
+      if (da > W.arc * Math.PI / 180 && d > 12) return;
+      if (d - extra < bd) { bd = d - extra; best = z; isAnimal = an; }
+    };
+    for (const z of zombies) consider(z, 0, false);
+    // Big animals are easier to reach (their bodies are long).
+    for (const an of animals) consider(an, Math.max(0, ANIMAL_TYPES[an.sp].radius - 8), true);
+    if (best) { if (isAnimal) hitAnimal(best, W, a.ang); else hitZombie(best, W, a.ang); makeNoise(p.x, p.y, W.noise || NOISE.punch, true); }
   }
   if (a.t >= W.duration) { p.attack = null; p.attackCd = W.cooldown - W.duration; }
 }
@@ -1014,14 +1024,26 @@ function renderCorpses(camX, camY) {
     if (c.t > 0.6) {
       const g = Math.min(1, (c.t - 0.6) / 3), r = c.pool * (0.3 + 0.7 * g);
       bctx.globalAlpha = 0.7 * fade; bctx.fillStyle = '#5a0d0a';
-      bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 22), Math.round(by), Math.round(r * 1.6), Math.round(r * 0.6), 0, 0, Math.PI * 2); bctx.fill();
+      bctx.beginPath(); bctx.ellipse(Math.round(bx + (c.animal ? 0 : c.side * 22)), Math.round(by), Math.round(r * 1.6), Math.round(r * 0.6), 0, 0, Math.PI * 2); bctx.fill();
     }
     // Shadow stretches out as the body goes down.
-    const lie = Math.abs(deg) / 90;
+    const lie = c.animal ? 0 : Math.abs(deg) / 90;
     bctx.globalAlpha = 0.3 * fade; bctx.fillStyle = '#10140a';
     bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 20 * lie), Math.round(by), Math.round(9 + 16 * lie), Math.round(3 + 2 * lie), 0, 0, Math.PI * 2); bctx.fill();
-    // The body pivots on its feet.
     bctx.globalAlpha = fade;
+    if (c.animal) {
+      // Animals' legs give way: the body sinks and tips slightly onto its side.
+      const p = Math.min(1, c.t / 0.45), e = p * p, sq = 1 - 0.38 * e;
+      bctx.save();
+      bctx.translate(Math.round(bx), Math.round(by));
+      bctx.rotate(c.side * 0.14 * e);
+      bctx.scale(1, sq);
+      bctx.drawImage(c.sheet, c.fx * PF, c.fy * PF, PF, PF, -32, -A_ANCHOR, PF, PF);
+      bctx.restore();
+      bctx.globalAlpha = 1;
+      continue;
+    }
+    // The body pivots on its feet.
     bctx.save();
     bctx.translate(Math.round(bx), Math.round(by - 2 * (1 - lie)));
     bctx.rotate(deg * Math.PI / 180);
@@ -1600,6 +1622,7 @@ const NOISE = {
 const MUFFLE = 0.55;          // walls cut sound to about half
 function makeNoise(x, y, tiles, fromPlayer) {
   const src = buildingAt(x, y - 4);
+  if (!src) scareAnimals(x, y, tiles);
   for (const z of zombies) {
     if (z.dead || z.mode === 'chase' || z.mode === 'attack' || z.mode === 'bang') continue;
     const zb = buildingAt(z.x, z.y - 4);
@@ -1693,11 +1716,16 @@ function renderWorld(camX, camY, withPlayer) {
       if (z.x < camX - 40 || z.x > camX + BW + 40 || z.y < camY - 8 || z.y > camY + BH + 64) continue;
       items.push({ k: -2, x: z.x, y: z.y, z });
     }
+    for (const a of animals) {
+      if (a.x < camX - 40 || a.x > camX + BW + 40 || a.y < camY - 8 || a.y > camY + BH + 64) continue;
+      items.push({ k: -9, x: a.x, y: a.y, a });
+    }
   }
   items.sort((a, b) => a.y - b.y);
 
   bctx.fillStyle = 'rgba(16, 20, 8, 0.32)';
   for (const o of items) {
+    if (o.k === -9) { drawShadow(o.x, o.y, ...ANIMAL_TYPES[o.a.sp].shadow); continue; }
     if (o.k <= -3) continue;
     if (o.k === -2 && ZOMBIE_TYPES[o.z.type].shadow) drawShadow(o.x, o.y, ...ZOMBIE_TYPES[o.z.type].shadow);
     else if (o.k === -1) { if (!player.swimming) { const h = jumpHeight(player); drawShadow(player.x, player.y, 9 - h * 0.25, 3 - h * 0.08); } }
@@ -1708,6 +1736,7 @@ function renderWorld(camX, camY, withPlayer) {
 
   const pbx0 = withPlayer ? player.x - 11 : 0, pby0 = withPlayer ? player.y - 46 : 0;
   for (const o of items) {
+    if (o.k === -9) { drawAnimal(o.a); continue; }
     if (o.k <= -3) { drawBuildingItem(o); continue; }
     if (o.k === -1) {
       const [fx, fy, sheet] = playerFrame(player);
@@ -2345,14 +2374,11 @@ const ITEMS = {
   hardhat:        { name: 'Hard hat', cat: 'helmet', abbr: 'HRD', wear: 'wearHardhat', protect: { head: 0.35 } },
   militaryhelmet: { name: 'Military helmet', cat: 'helmet', abbr: 'MIL', wear: 'wearMilitary', protect: { head: 0.5 } },
   motohelmet:     { name: 'Motorcycle helmet', cat: 'helmet', abbr: 'MOT', wear: 'wearMoto', protect: { head: 0.6 } },
-  flannel:  { name: 'Flannel shirt', cat: 'clothes', abbr: 'SHT' },
   // Tops. protect covers the torso and both arms; pockets add storage slots while worn.
   hoodie:        { name: 'Hoodie', cat: 'clothes', abbr: 'HOD', wear: 'wearHoodie', protect: { torso: 0.1, rArm: 0.1, lArm: 0.1 } },
   leatherjacket: { name: 'Leather jacket', cat: 'clothes', abbr: 'LTH', wear: 'wearLeather', protect: { torso: 0.3, rArm: 0.35, lArm: 0.35 } },
   wintercoat:    { name: 'Winter coat', cat: 'clothes', abbr: 'CT', wear: 'wearCoat', protect: { torso: 0.2, rArm: 0.2, lArm: 0.2 } },
   utilityvest:   { name: 'Utility vest', cat: 'clothes', abbr: 'VST', wear: 'wearVest', protect: { torso: 0.2 } },
-  jeans:    { name: 'Jeans', cat: 'pants', abbr: 'JNS' },
-  boots:    { name: 'Work boots', cat: 'shoes', abbr: 'BTS' },
   bagS:     { name: 'Small backpack', cat: 'backpack', abbr: 'BG3', slots: 3, wear: 'wearBagS' },
   bagM:     { name: 'Medium backpack', cat: 'backpack', abbr: 'BG6', slots: 6, wear: 'wearBagM' },
   bagL:     { name: 'Large backpack', cat: 'backpack', abbr: 'B12', slots: 12, wear: 'wearBagL' },
@@ -2362,7 +2388,7 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['jeans', 0.2], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
   // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
   crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
   crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05]] },
@@ -2414,7 +2440,7 @@ function treat(item, part) {
   return true;
 }
 // Clothes can be torn into rags.
-const TEARABLE = { flannel: 2, hoodie: 2, jeans: 2, beanie: 1, wintercoat: 3 };
+const TEARABLE = { hoodie: 2, beanie: 1, wintercoat: 3 };
 function useItem(ref, part) {
   const item = getItem(ref); if (!item) return;
   if (item.use === 'medical') {
@@ -2536,8 +2562,16 @@ function newGame(n) {
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
   zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null; searching = null;
+  animals = []; aSpawnT = 4;
   startPlaying();
   saveGame();
+}
+// Items that were taken out of the game vanish from old saves (inventory and searched containers).
+function dropRemovedItems() {
+  const ok = it => it && (!it.key || ITEMS[it.key]) ? it : null;
+  for (const k in inv.equip) inv.equip[k] = ok(inv.equip[k]);
+  inv.storage = inv.storage.map(ok);
+  for (const s of bstate.values()) for (const i in s.c) s.c[i] = s.c[i].map(ok);
 }
 function loadGame(n) {
   const s = readSlot(n); if (!s) { renderSlots(); return; }
@@ -2562,6 +2596,8 @@ function loadGame(n) {
   inv = newInventory();
   bstate.clear(); for (const [k, v] of Object.entries(s.bstate || {})) bstate.set(k, v);
   if (s.inv) { Object.assign(inv.equip, s.inv.equip || {}); inv.storage = s.inv.storage || inv.storage; fitStorage(); }
+  dropRemovedItems();
+  loadAnimals(s.animals);
   startPlaying();
 }
 function saveGame() {
@@ -2572,6 +2608,7 @@ function saveGame() {
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds, hunger: Math.round(player.hunger * 10) / 10, thirst: Math.round(player.thirst * 10) / 10 },
     zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, home: z.home, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    animals: saveAnimals(),
     inv, explored: ex, markers, bstate: Object.fromEntries(bstate),
   }));
   lastAutosave = performance.now();
@@ -2605,6 +2642,7 @@ function loop(now) {
       if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
       playTime += dt;
       updateZombies(dt);
+      updateAnimals(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }
       revealT -= dt;
       if (revealT <= 0) { revealAround(player.x, player.y); revealT = 0.2; }
@@ -2664,6 +2702,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

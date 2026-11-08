@@ -76,6 +76,11 @@ ASSETS = {
     "zWalker4Mask": "zombie_walker4_v1_mask.png",
     "zWalker5Mask": "zombie_walker5_v1_mask.png",
     "invPanel": "inventory_mock_v1.png",
+    "animalBear": "animal_bear_v1.png",
+    "animalMoose": "animal_moose_v1.png",
+    "animalDeer": "animal_deer_v1.png",
+    "animalRabbit": "animal_rabbit_v1.png",
+    "animalRaccoon": "animal_raccoon_v1.png",
     "bodyLabels": "body_labels.png",
 }
 
@@ -89,7 +94,8 @@ def main():
     out = (tpl.replace("{{ASSETS}}", json.dumps(assets))
               .replace("{{WORLD}}", (ROOT / "src" / "world.js").read_text())
               .replace("{{BUILDINGS}}", (ROOT / "src" / "buildings_world.js").read_text())
-              .replace("{{GAME}}", (ROOT / "src" / "game.js").read_text())
+              .replace("{{GAME}}", (ROOT / "src" / "game.js").read_text()
+                       .replace("// {{ANIMALS}}", (ROOT / "src" / "animals.js").read_text()))
               .replace("{{BUILD}}", build))
     (ROOT / "index.html").write_text(out)
     print(f"index.html written ({len(out) // 1024} KB)")

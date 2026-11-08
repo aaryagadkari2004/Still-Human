@@ -66,6 +66,15 @@ right-click to remove one, C to re-centre.
 - Bleeding: below 70% a part bleeds lightly (clots by itself after 30 s unless hit again),
   below 45% it bleeds steadily, and below 20% it bleeds severely. Bleeding drains that part
   until treated, leaves a blood trail, shows as drops next to the health bar, and pulses on the body figure.
+- Wild animals roam the world (more in the woods):
+  - Bears (forest only) are territorial: get within about 4 tiles and a bear faces you, then
+    charges. They maul zombies that wander close too, and return to their spot after a chase.
+  - Moose are passive until you hit one, then it charges you for a while.
+  - Deer (in small herds) and rabbits run from people, zombies and loud noises. Crouching lets you
+    get closer.
+  - Raccoons are passive and sneak up to camp crates when nobody is near, sometimes running off with
+    something from inside.
+  - All of them can be killed and leave a body (hunting and drops are coming later).
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,
   with flickering flame and drifting smoke) and none, one or a few crates (small, medium, large)
   holding canned food, water, medical supplies and camping gear. Click a crate to search it.
@@ -82,7 +91,7 @@ right-click to remove one, C to re-centre.
   standing sprites by tools/make_wear_moves.py (no extra sheets to draw).
 - Healing (right-click to treat the worst wound, or drag onto a body part): cloth rag heals a little
   and slows bleeding; bandage heals more and stops it; first aid kit fully heals the part and stops
-  it; antiseptic is kept for infection (coming later). Shirts, hoodies, jeans and beanies can be torn
+  it; antiseptic is kept for infection (coming later). Hoodies, winter coats and beanies can be torn
   into rags (right-click).
 - Headwear shows on your character in every animation and protects your head: beanie 5%, bike
   helmet 25%, hard hat 35%, military helmet 50%, motorcycle helmet 60% less damage to the head.
@@ -108,6 +117,7 @@ assets/                  art (PNG sprite sheets and tiles)
 src/world.js             world generation (noise, terrain, autotiling, objects)
 src/buildings_world.js   house floor plans and where hamlets and cabins go
 src/game.js              rendering, player, zombies, inventory, map, menus, saves
+src/animals.js           wild animals (inlined into game.js by the build)
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
 tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)

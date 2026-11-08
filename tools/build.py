@@ -24,6 +24,7 @@ ASSETS = {
     "zWalker3": "zombie_walker3_v1.png",
     "zWalker4": "zombie_walker4_v1.png",
     "zWalker5": "zombie_walker5_v1.png",
+    "zBrute": "zombie_brute_v1.png",
     "zWalkerMask": "zombie_walker_v1_mask.png",
     "zWalker2Mask": "zombie_walker2_v1_mask.png",
     "zWalker3Mask": "zombie_walker3_v1_mask.png",

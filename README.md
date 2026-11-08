@@ -31,6 +31,8 @@ right-click to remove one, C to re-centre.
 - Minimap and full map that only show explored areas, plus map markers.
 - Walker zombies (5 looks): wander, notice you within about 8 tiles, chase more slowly than you walk,
   lose interest when they lose sight of you, and lunge to attack.
+- Brutes: big, slow zombies with 2.5x health and double damage. They barely stagger, shove you
+  back when they hit, and show up alone (about 1 in 20 lone zombies) or mixed into larger hordes.
 - Zombie speed varies: 70% normal, 18% slower, 10% faster (up to your walking speed), and a rare 2%
   sprint up to your full running speed.
 - Fist fighting: click to punch toward the mouse. Fists only reach about a metre and hit within a

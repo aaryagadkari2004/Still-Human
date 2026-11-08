@@ -376,8 +376,20 @@ const ZOMBIE_TYPES = {
     speed: 46, wanderSpeed: 18, hp: 100,
     damage: 14, reach: 27, windup: 0.45, cooldown: 1.4,
     sight: 10 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
+    radius: 6.5, stunMul: 1, knockMul: 1, interrupt: 1,
+  },
+  // Brutes: big, slow and tough. 2.5x the health, hit twice as hard, shrug off most
+  // stagger and knockback, and shove the player back when they connect.
+  brute: {
+    looks: [{ img: 'zBrute' }],
+    speed: 33, wanderSpeed: 13, hp: 250, speedVar: [0.9, 1.1],
+    damage: 28, reach: 33, windup: 0.75, cooldown: 2.0, shove: 14,
+    sight: 9 * TILE, notice: 3 * TILE, forget: 8, animRate: 3.4,
+    radius: 11, stunMul: 0.35, knockMul: 0.25, interrupt: 0.3, shadow: [14, 4],
   },
 };
+// How often brutes show up: alone sometimes, and mixed into bigger hordes.
+const BRUTE_SOLO_CHANCE = 0.06, BRUTE_IN_HORDE_CHANCE = 0.08;
 // Speed varies per zombie: most shamble at the normal pace, some are slower,
 // a few are faster, and rare sprinters can match the player's full sprint.
 const Z_SPEEDS = [
@@ -462,7 +474,7 @@ function makeZombie(type, x, y) {
     top: Math.floor(Math.random() * TOP_COLORS.length), bottom: Math.floor(Math.random() * BOTTOM_COLORS.length),
     x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
     mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0,
-    horde: 0, ox: 0, oy: 0, speedMul: rollSpeed() };
+    horde: 0, ox: 0, oy: 0, speedMul: T.speedVar ? T.speedVar[0] + Math.random() * (T.speedVar[1] - T.speedVar[0]) : rollSpeed() };
 }
 function faceToward(a, vx, vy) {
   if (Math.abs(vx) > Math.abs(vy)) a.dir = vx > 0 ? 'E' : 'W'; else a.dir = vy > 0 ? 'S' : 'N';
@@ -475,10 +487,12 @@ function moveZombie(z, vx, vy, speed, dt) {
   const ox = z.x, oy = z.y;
   const tryMove = (nx, ny) => {
     if (feetBlocked(nx, ny)) return false;
-    if (Math.hypot(nx - player.x, ny - player.y) < 20) return false;          // don't walk into the player
+    const zr = ZOMBIE_TYPES[z.type].radius;
+    if (Math.hypot(nx - player.x, ny - player.y) < 13.5 + zr) return false;          // don't walk into the player
     for (const o of zombies) {
-      if (o === z || o.dead || Math.abs(nx - o.x) > 14 || Math.abs(ny - o.y) > 14) continue;
-      if (Math.hypot(nx - o.x, ny - o.y) < 13 && Math.hypot(z.x - o.x, z.y - o.y) >= 13) return false;
+      if (o === z || o.dead || Math.abs(nx - o.x) > 24 || Math.abs(ny - o.y) > 24) continue;
+      const rr = zr + ZOMBIE_TYPES[o.type].radius;
+      if (Math.hypot(nx - o.x, ny - o.y) < rr && Math.hypot(z.x - o.x, z.y - o.y) >= rr) return false;
     }
     return true;
   };
@@ -518,7 +532,16 @@ function updateZombie(z, dt) {
     z.moving = false; faceToward(z, ddx, ddy);
     z.atk -= dt;
     if (z.atk <= 0) {
-      if (alive && d <= T.reach + 8) hurtPlayer(T.damage, 'Killed by a zombie.', z.x, z.y);
+      if (alive && d <= T.reach + 8) {
+        hurtPlayer(T.damage, 'Killed by a zombie.', z.x, z.y);
+        if (T.shove && state === 'play') {
+          // A brute's blow shoves the player back.
+          const sx = ddx / (d || 1) * T.shove, sy = ddy / (d || 1) * T.shove;
+          if (!feetBlocked(player.x + sx, player.y)) player.x += sx;
+          if (!feetBlocked(player.x, player.y + sy)) player.y += sy;
+          hurtFx.shake = 1.6;
+        }
+      }
       z.cd = T.cooldown; z.mode = 'chase';
     }
   } else if (sees) {
@@ -586,7 +609,8 @@ function spawnGroup(size) {
       const oa = Math.random() * Math.PI * 2, orr = made === 0 ? 0 : Math.sqrt(Math.random()) * spread;
       const x = cx + Math.cos(oa) * orr, y = cy + Math.sin(oa) * orr;
       if (!canStand(x, y)) continue;
-      const z = makeZombie('walker', x, y);
+      const bruteChance = size === 1 ? BRUTE_SOLO_CHANCE : size >= 5 && made > 0 ? BRUTE_IN_HORDE_CHANCE : 0;
+      const z = makeZombie(Math.random() < bruteChance ? 'brute' : 'walker', x, y);
       if (hid) { z.horde = hid; z.ox = x - cx; z.oy = y - cy; z.dir = 'NSEW'[(hid * 7) % 4]; }
       zombies.push(z); made++;
     }
@@ -757,9 +781,10 @@ function hitZombie(z, W, ang) {
   const dmg = W.damage[0] + Math.random() * (W.damage[1] - W.damage[0]);
   z.hp -= dmg; z.flash = 0.12;
   // A hit staggers the zombie, interrupts its attack and knocks it back a little.
-  z.stun = W.stun;
-  if (z.mode === 'attack') { z.mode = 'chase'; z.cd = Math.max(z.cd, 0.5); }
-  const kx = Math.cos(ang) * W.knockback, ky = Math.sin(ang) * W.knockback;
+  const ZT = ZOMBIE_TYPES[z.type];
+  z.stun = W.stun * ZT.stunMul;
+  if (z.mode === 'attack' && Math.random() < ZT.interrupt) { z.mode = 'chase'; z.cd = Math.max(z.cd, 0.5); }
+  const kx = Math.cos(ang) * W.knockback * ZT.knockMul, ky = Math.sin(ang) * W.knockback * ZT.knockMul;
   if (!feetBlocked(z.x + kx, z.y)) z.x += kx;
   if (!feetBlocked(z.x, z.y + ky)) z.y += ky;
   if (z.mode !== 'chase') { z.mode = 'chase'; z.gx = player.x; z.gy = player.y; z.lostT = 0; alertAround(z); }
@@ -869,7 +894,8 @@ function renderWorld(camX, camY, withPlayer) {
 
   bctx.fillStyle = 'rgba(16, 20, 8, 0.32)';
   for (const o of items) {
-    if (o.k < 0) drawShadow(o.x, o.y, 9, 3);
+    if (o.k === -2 && ZOMBIE_TYPES[o.z.type].shadow) drawShadow(o.x, o.y, ...ZOMBIE_TYPES[o.z.type].shadow);
+    else if (o.k < 0) drawShadow(o.x, o.y, 9, 3);
     else { const k = KINDS[o.k]; drawShadow(o.x, o.y, k.rx, k.ry); }
   }
 
@@ -1568,5 +1594,5 @@ loadImages().then(() => {
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
   startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; },
-  spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
+  spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

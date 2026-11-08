@@ -365,23 +365,87 @@ function shakeOffset() {
 }
 
 // ---- Zombies ------------------------------------------------------------------------------------
-// Each type: art (one or more looks, picked at random), speeds (px/s), health,
-// attack, senses. New types go here.
+// Each type: looks (sprite sheets, picked at random), speeds (px/s), health, attack, senses.
+// onePiece looks (like a dress) get one colour for the whole outfit. New types go here.
 const ZOMBIE_TYPES = {
   walker: {
-    imgs: ['zWalker', 'zWalker2'], speed: 46, wanderSpeed: 18, hp: 100,
+    looks: [{ img: 'zWalker' }, { img: 'zWalker2' }, { img: 'zWalker3' }, { img: 'zWalker4', onePiece: true }],
+    speed: 46, wanderSpeed: 18, hp: 100,
     damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
     sight: 8 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
   },
 };
-const Z_CAP = 9;              // most zombies around the player at once
-const Z_DESPAWN = 42 * TILE;  // zombies further than this are removed
+const Z_CAP = 36;             // most zombies around the player at once
+const Z_DESPAWN = 46 * TILE;  // zombies further than this are removed
+
+// Horde sizes: solo zombies are common, big hordes are rare.
+const HORDES = [
+  { weight: 55, min: 1,  max: 1 },   // lone zombie
+  { weight: 28, min: 2,  max: 4 },   // small group
+  { weight: 12, min: 5,  max: 8 },   // horde
+  { weight: 5,  min: 10, max: 15 },  // large horde
+];
+
+// ---- Zombie outfits: each zombie's clothes get their own colours ----
+// Muted, dirty colours so they still read as worn clothing.
+const TOP_COLORS = ['#3b4a6b', '#5a2e2e', '#4d5b3a', '#6b5a3a', '#2f3f45', '#5b3d5c', '#7a6a4a', '#3d3d42',
+                    '#6e3b2a', '#2e4a3f', '#7b7468', '#4a3a2c', '#5c6b78', '#7a4a3a', '#2c2f3a', '#6a6040'];
+const BOTTOM_COLORS = ['#34405a', '#2b3550', '#4a4436', '#2a2a2e', '#4d3f30', '#555a50', '#3a4a5e', '#5e5240', '#3a3232'];
+const outfitCache = new Map();
+let maskData = {};
+function hexRgb(h) { return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)); }
+function prepareZombieMasks() {
+  for (const T of Object.values(ZOMBIE_TYPES)) for (const L of T.looks) {
+    const img = IMG[L.img], m = IMG[L.img + 'Mask'];
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0); const src = g.getImageData(0, 0, c.width, c.height);
+    g.clearRect(0, 0, c.width, c.height);
+    let mask = null;
+    if (m) { g.drawImage(m, 0, 0); const md = g.getImageData(0, 0, c.width, c.height).data; mask = new Uint8Array(c.width * c.height); for (let i = 0; i < mask.length; i++) mask[i] = md[i * 4 + 3] ? md[i * 4] : 0; }
+    // Average brightness of each garment, so shading is kept when recoloured.
+    const sum = [0, 0, 0], n = [0, 0, 0];
+    if (mask) for (let i = 0; i < mask.length; i++) if (mask[i]) { const d = src.data; sum[mask[i]] += (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3; n[mask[i]]++; }
+    maskData[L.img] = { src, mask, w: c.width, h: c.height, mean: [0, sum[1] / (n[1] || 1), sum[2] / (n[2] || 1)] };
+  }
+}
+function outfitSheet(look, top, bottom) {
+  const key = look.img + '|' + top + '|' + bottom;
+  let c = outfitCache.get(key);
+  if (c) return c;
+  const M = maskData[look.img];
+  if (!M || !M.mask) return IMG[look.img];
+  const cols = [null, hexRgb(TOP_COLORS[top % TOP_COLORS.length]), hexRgb(look.onePiece ? TOP_COLORS[top % TOP_COLORS.length] : BOTTOM_COLORS[bottom % BOTTOM_COLORS.length])];
+  const out = new ImageData(new Uint8ClampedArray(M.src.data), M.w, M.h), d = out.data;
+  for (let i = 0; i < M.mask.length; i++) {
+    const g = M.mask[i]; if (!g) continue;
+    const k = i * 4, lum = (d[k] + d[k + 1] + d[k + 2]) / 3;
+    const f = Math.min(1.8, lum / Math.max(8, M.mean[g])) * 0.82, base = cols[g];
+    // Mostly the new colour with the original shading, plus a little of the old grime.
+    for (let j = 0; j < 3; j++) d[k + j] = Math.min(255, base[j] * f * 0.85 + d[k + j] * 0.15);
+  }
+  c = document.createElement('canvas'); c.width = M.w; c.height = M.h;
+  c.getContext('2d').putImageData(out, 0, 0);
+  outfitCache.set(key, c);
+  if (outfitCache.size > 60) outfitCache.delete(outfitCache.keys().next().value);
+  return c;
+}
+function zombieSheet(z) {
+  const T = ZOMBIE_TYPES[z.type], look = T.looks[z.look] || T.looks[0];
+  return outfitSheet(look, z.top, z.bottom);
+}
+
 let zombies = [];
+let hordes = new Map();   // id -> { id, gx, gy, t }
+let nextHordeId = 1;
 let zSpawnT = 0;
 function makeZombie(type, x, y) {
   const T = ZOMBIE_TYPES[type];
-  return { type, look: Math.floor(Math.random() * T.imgs.length), x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
-    mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0 };
+  return { type, look: Math.floor(Math.random() * T.looks.length),
+    top: Math.floor(Math.random() * TOP_COLORS.length), bottom: Math.floor(Math.random() * BOTTOM_COLORS.length),
+    x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
+    mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0,
+    horde: 0, ox: 0, oy: 0 };
 }
 function faceToward(a, vx, vy) {
   if (Math.abs(vx) > Math.abs(vy)) a.dir = vx > 0 ? 'E' : 'W'; else a.dir = vy > 0 ? 'S' : 'N';
@@ -395,7 +459,10 @@ function moveZombie(z, vx, vy, speed, dt) {
   const tryMove = (nx, ny) => {
     if (feetBlocked(nx, ny)) return false;
     if (Math.hypot(nx - player.x, ny - player.y) < 20) return false;          // don't walk into the player
-    for (const o of zombies) if (o !== z && Math.hypot(nx - o.x, ny - o.y) < 13 && Math.hypot(z.x - o.x, z.y - o.y) >= 13) return false;
+    for (const o of zombies) {
+      if (o === z || Math.abs(nx - o.x) > 14 || Math.abs(ny - o.y) > 14) continue;
+      if (Math.hypot(nx - o.x, ny - o.y) < 13 && Math.hypot(z.x - o.x, z.y - o.y) >= 13) return false;
+    }
     return true;
   };
   if (tryMove(z.x + ux * sp, z.y)) z.x += ux * sp;
@@ -403,18 +470,28 @@ function moveZombie(z, vx, vy, speed, dt) {
   const moved = Math.hypot(z.x - ox, z.y - oy);
   z.moving = moved > sp * 0.2;
   faceToward(z, ux, uy);
-  // Stuck on a tree or shoreline: side-step for a moment.
+  // Stuck on a tree, shoreline or another zombie: side-step for a moment.
   if (moved < sp * 0.3) z.stuck += dt; else z.stuck = Math.max(0, z.stuck - dt);
   if (z.stuck > 0.35 && z.detour <= 0) {
     const side = Math.random() < 0.5 ? 1 : -1;
     z.dx = -uy * side; z.dy = ux * side; z.detour = 0.5 + Math.random() * 0.5; z.stuck = 0;
   }
 }
+// One zombie spotting you sets off the rest of its horde (and any zombie close by).
+function alertAround(z) {
+  for (const o of zombies) {
+    if (o === z || o.mode === 'chase' || o.mode === 'attack') continue;
+    const sameHorde = z.horde && o.horde === z.horde;
+    if (sameHorde || Math.hypot(o.x - z.x, o.y - z.y) < 5 * TILE) {
+      o.mode = 'chase'; o.lostT = 0; o.gx = player.x; o.gy = player.y;
+    }
+  }
+}
 function updateZombie(z, dt) {
   const T = ZOMBIE_TYPES[z.type];
   const ddx = player.x - z.x, ddy = player.y - z.y, d = Math.hypot(ddx, ddy);
   const alive = player.hp > 0;
-  const sees = alive && (d < T.notice || d < T.sight);
+  const sees = alive && d < T.sight;
   z.cd = Math.max(0, z.cd - dt);
 
   if (z.mode === 'attack') {
@@ -425,16 +502,26 @@ function updateZombie(z, dt) {
       z.cd = T.cooldown; z.mode = 'chase';
     }
   } else if (sees) {
+    if (z.mode !== 'chase') alertAround(z);
     z.mode = 'chase'; z.lostT = 0; z.gx = player.x; z.gy = player.y;
     if (d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
     else if (d > T.reach - 4) moveZombie(z, ddx, ddy, T.speed, dt);
     else { z.moving = false; faceToward(z, ddx, ddy); }
   } else if (z.mode === 'chase') {
-    // Lost sight: walk to where the player was last seen, then give up.
+    // Lost sight (or was alerted): walk to where the player was last seen, then give up.
     z.lostT += dt;
     const gx = z.gx - z.x, gy = z.gy - z.y;
-    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget) moveZombie(z, gx, gy, T.speed, dt);
-    else { z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false; }
+    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget + 4) moveZombie(z, gx, gy, T.speed, dt);
+    else {
+      z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false;
+      const h = hordes.get(z.horde); if (h) { h.gx = z.x; h.gy = z.y; } // the horde regroups here
+    }
+  } else if (z.horde && hordes.has(z.horde)) {
+    // Horde members drift together toward the horde's goal, each keeping its own spot.
+    const h = hordes.get(z.horde);
+    const gx = h.gx + z.ox - z.x, gy = h.gy + z.oy - z.y, dist = Math.hypot(gx, gy);
+    if (dist > 10) { moveZombie(z, gx, gy, T.wanderSpeed * (dist > 3 * TILE ? 1.6 : 1), dt); z.mode = 'wander'; }
+    else { z.moving = false; z.mode = 'idle'; }
   } else if (z.mode === 'wander') {
     const gx = z.gx - z.x, gy = z.gy - z.y;
     z.t -= dt;
@@ -454,28 +541,60 @@ function zombieFrame(z) {
   if (z.mode === 'attack') return [Math.floor((1 - z.atk / ZOMBIE_TYPES[z.type].windup) * 3.99), DIR_ROW[z.dir]];
   return [f, z.moving ? DIR_ROW[z.dir] : IDLE_ROW[z.dir]];
 }
-function trySpawnZombie(minR, maxR) {
+function canStand(x, y) {
+  return tileAt(Math.floor(x / TILE), Math.floor(y / TILE)).t !== T_WATER && !feetBlocked(x, y) &&
+    !zombies.some(o => Math.abs(o.x - x) < 14 && Math.abs(o.y - y) < 14);
+}
+function pickHordeSize() {
+  let r = Math.random() * HORDES.reduce((a, h) => a + h.weight, 0);
+  for (const h of HORDES) { r -= h.weight; if (r <= 0) return h.min + Math.floor(Math.random() * (h.max - h.min + 1)); }
+  return 1;
+}
+// Spawns a lone zombie or a horde out of sight. Bigger hordes appear further away.
+function spawnGroup(size) {
+  const minR = size > 4 ? 22 : 16, maxR = size > 4 ? 32 : 28;
   for (let i = 0; i < 12; i++) {
     const a = Math.random() * Math.PI * 2, r = (minR + Math.random() * (maxR - minR)) * TILE;
-    const x = player.x + Math.cos(a) * r, y = player.y + Math.sin(a) * r;
-    // Never pop in on screen.
-    if (Math.abs(x - player.x) < BW / 2 + 48 && Math.abs(y - player.y) < BH / 2 + 96) continue;
-    if (tileAt(Math.floor(x / TILE), Math.floor(y / TILE)).t === T_WATER || feetBlocked(x, y)) continue;
-    zombies.push(makeZombie('walker', x, y));
-    return true;
+    const cx = player.x + Math.cos(a) * r, cy = player.y + Math.sin(a) * r;
+    if (Math.abs(cx - player.x) < BW / 2 + 64 && Math.abs(cy - player.y) < BH / 2 + 112) continue; // never pop in on screen
+    if (!canStand(cx, cy)) continue;
+    let hid = 0;
+    if (size > 1) { hid = nextHordeId++; hordes.set(hid, { id: hid, gx: cx, gy: cy, t: 3 + Math.random() * 6 }); }
+    const spread = 14 + Math.sqrt(size) * 14;
+    let made = 0;
+    for (let k = 0; k < size * 6 && made < size; k++) {
+      const oa = Math.random() * Math.PI * 2, orr = made === 0 ? 0 : Math.sqrt(Math.random()) * spread;
+      const x = cx + Math.cos(oa) * orr, y = cy + Math.sin(oa) * orr;
+      if (!canStand(x, y)) continue;
+      const z = makeZombie('walker', x, y);
+      if (hid) { z.horde = hid; z.ox = x - cx; z.oy = y - cy; z.dir = 'NSEW'[(hid * 7) % 4]; }
+      zombies.push(z); made++;
+    }
+    return made;
   }
-  return false;
+  return 0;
+}
+function updateHordes(dt) {
+  for (const h of hordes.values()) {
+    h.t -= dt;
+    if (h.t <= 0) {
+      // Pick a new spot to shamble toward.
+      const a = Math.random() * Math.PI * 2, r = (3 + Math.random() * 7) * TILE;
+      h.gx += Math.cos(a) * r; h.gy += Math.sin(a) * r; h.t = 8 + Math.random() * 10;
+    }
+  }
 }
 function updateZombies(dt) {
   zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN);
+  const alive = new Set(zombies.map(z => z.horde));
+  for (const id of hordes.keys()) if (!alive.has(id)) hordes.delete(id);
   zSpawnT -= dt;
   if (zSpawnT <= 0) {
-    zSpawnT = 7 + Math.random() * 9;
-    if (zombies.length < Z_CAP) {
-      const group = Math.random() < 0.25 ? 2 : 1;
-      for (let i = 0; i < group && zombies.length < Z_CAP; i++) trySpawnZombie(16, 28);
-    }
+    zSpawnT = 8 + Math.random() * 10;
+    const size = pickHordeSize();
+    if (zombies.length + size <= Z_CAP) spawnGroup(size);
   }
+  updateHordes(dt);
   for (const z of zombies) updateZombie(z, dt);
 }
 
@@ -614,7 +733,7 @@ function renderWorld(camX, camY, withPlayer) {
       // Lunge forward slightly at the end of an attack.
       let lx = 0, ly = 0;
       if (o.z.mode === 'attack' && o.z.atk < 0.15) { const v = { N: [0, -3], S: [0, 3], E: [3, 0], W: [-3, 0] }[o.z.dir]; lx = v[0]; ly = v[1]; }
-      bctx.drawImage(IMG[ZOMBIE_TYPES[o.z.type].imgs[o.z.look] || ZOMBIE_TYPES[o.z.type].imgs[0]], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
+      bctx.drawImage(zombieSheet(o.z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
       continue;
     }
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
@@ -1117,7 +1236,7 @@ function renderSlots() {
 function showMenu() {
   state = 'menu';
   if (!world || player) { world = new WorldGen((Math.random() * 2 ** 32) >>> 0); resetCaches(); }
-  player = null; zombies = [];
+  player = null; zombies = []; hordes = new Map();
   menuCam.x = 0; menuCam.y = 0;
   ui.menu.classList.remove('hidden'); ui.pause.classList.add('hidden'); ui.dead.classList.add('hidden');
   ui.maphelp.classList.add('hidden'); ui.hint.classList.add('hidden');
@@ -1169,7 +1288,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
-  zombies = []; zSpawnT = 12; inv = newInventory();
+  zombies = []; hordes = new Map(); zSpawnT = 12; inv = newInventory();
   startPlaying();
   saveGame();
 }
@@ -1183,7 +1302,14 @@ function loadGame(n) {
   if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
-  zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; if (z.look != null) o.look = z.look; return o; });
+  zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S';
+    for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy']) if (z[k] != null) o[k] = z[k];
+    return o; });
+  hordes = new Map(); nextHordeId = 1;
+  for (const z of zombies) if (z.horde) {
+    if (!hordes.has(z.horde)) hordes.set(z.horde, { id: z.horde, gx: z.x - z.ox, gy: z.y - z.oy, t: 4 });
+    nextHordeId = Math.max(nextHordeId, z.horde + 1);
+  }
   zSpawnT = 8;
   inv = newInventory();
   if (s.inv) { Object.assign(inv.equip, s.inv.equip || {}); inv.storage = s.inv.storage || inv.storage; fitStorage(); }
@@ -1196,7 +1322,7 @@ function saveGame() {
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
-    zombies: zombies.map(z => ({ t: z.type, look: z.look, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    zombies: zombies.map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     inv, explored: ex, markers,
   }));
   lastAutosave = performance.now();
@@ -1274,6 +1400,7 @@ resize();
 loadImages().then(() => {
   prepareAssets();
   prepareInventoryArt();
+  prepareZombieMasks();
   ui.loading.classList.add('hidden');
   showMenu();
   requestAnimationFrame(loop);
@@ -1282,5 +1409,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
+  spawnGroup, get hordes() { return hordes; },
   spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

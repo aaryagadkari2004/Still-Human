@@ -28,8 +28,13 @@ right-click to remove one, C to re-centre.
 - Player with 4-direction walk and run animations, collisions, and shadows. Trees fade
   when you walk behind them.
 - Minimap and full map that only show explored areas, plus map markers.
-- Walker zombies: wander, notice you within about 8 tiles, chase more slowly than you walk,
-  lose interest when they lose sight of you, and lunge to attack. Up to 9 roam around you at once.
+- Walker zombies (4 looks): wander, notice you within about 8 tiles, chase more slowly than you walk,
+  lose interest when they lose sight of you, and lunge to attack.
+- Every zombie gets its own clothing colours (top and bottom; dresses are one colour). Skin, hair,
+  eyes, blood and shoes keep the original art.
+- Hordes: lone zombies are most common (55%), then groups of 2-4 (28%), hordes of 5-8 (12%) and
+  large hordes of 10-15 (5%). Hordes drift around together, and when one spots you the whole
+  horde comes. Bigger hordes spawn further out. Up to 36 zombies around you at once.
 - Body-part health: head, torso, each arm, hand, leg and foot. Where a zombie hits you depends on
   where it is relative to the way you're facing. If any part reaches 0%, you die. The top-left bar
   shows your most injured part.
@@ -51,6 +56,8 @@ src/game.js              rendering, player, zombies, inventory, map, menus, save
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
 tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)
+tools/make_clothing_masks.py  finds the clothes on each zombie sheet so they can be recoloured
+                         (run it for every new zombie sheet, check with --preview)
 index.html               the built game
 ```
 

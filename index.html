@@ -62,7 +62,7 @@
   <h1>STILL HUMAN</h1>
   <div class="tag">Every world is new. Every death is final.</div>
   <div id="slots"></div>
-  <div class="foot">Build 2026-11-07 22:09</div>
+  <div class="foot">Build 2026-11-07 22:15</div>
 </div>
 
 <div id="pause" class="screen hidden">
@@ -736,7 +736,7 @@ const ZOMBIE_TYPES = {
     looks: [{ img: 'zWalker' }, { img: 'zWalker2' }, { img: 'zWalker3' }, { img: 'zWalker4', onePiece: true }],
     speed: 46, wanderSpeed: 18, hp: 100,
     damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
-    sight: 8 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
+    sight: 10 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
   },
 };
 const Z_CAP = 36;             // most zombies around the player at once
@@ -762,7 +762,7 @@ function prepareZombieMasks() {
   for (const T of Object.values(ZOMBIE_TYPES)) for (const L of T.looks) {
     const img = IMG[L.img], m = IMG[L.img + 'Mask'];
     const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const g = c.getContext('2d');
+    const g = c.getContext('2d', { willReadFrequently: true });
     g.drawImage(img, 0, 0); const src = g.getImageData(0, 0, c.width, c.height);
     g.clearRect(0, 0, c.width, c.height);
     let mask = null;
@@ -894,8 +894,8 @@ function updateZombie(z, dt) {
   } else {
     z.moving = false; z.t -= dt;
     if (z.t <= 0) {
-      const a = Math.random() * Math.PI * 2, r = (2 + Math.random() * 5) * TILE;
-      z.mode = 'wander'; z.gx = z.x + Math.cos(a) * r; z.gy = z.y + Math.sin(a) * r; z.t = 12;
+      const [gx, gy] = wanderTarget(z.x, z.y, 2, 5);
+      z.mode = 'wander'; z.gx = gx; z.gy = gy; z.t = 12;
     }
   }
   z.anim += dt * (z.moving ? T.animRate * (z.mode === 'chase' ? 1 : 0.6) : 2.5);
@@ -916,7 +916,7 @@ function pickHordeSize() {
 }
 // Spawns a lone zombie or a horde out of sight. Bigger hordes appear further away.
 function spawnGroup(size) {
-  const minR = size > 4 ? 22 : 16, maxR = size > 4 ? 32 : 28;
+  const minR = size > 4 ? 17 : 13, maxR = size > 4 ? 24 : 19;
   for (let i = 0; i < 12; i++) {
     const a = Math.random() * Math.PI * 2, r = (minR + Math.random() * (maxR - minR)) * TILE;
     const cx = player.x + Math.cos(a) * r, cy = player.y + Math.sin(a) * r;
@@ -938,13 +938,24 @@ function spawnGroup(size) {
   }
   return 0;
 }
+// Zombies wander aimlessly, but tend to drift toward wherever the living are,
+// so they gradually find their way into the player's area.
+function wanderTarget(x, y, minT, maxT) {
+  let a = Math.random() * Math.PI * 2;
+  if (player && Math.random() < 0.6) {
+    const toward = Math.atan2(player.y - y, player.x - x);
+    a = toward + (Math.random() - 0.5) * 1.6;
+  }
+  const r = (minT + Math.random() * (maxT - minT)) * TILE;
+  return [x + Math.cos(a) * r, y + Math.sin(a) * r];
+}
 function updateHordes(dt) {
   for (const h of hordes.values()) {
     h.t -= dt;
     if (h.t <= 0) {
       // Pick a new spot to shamble toward.
-      const a = Math.random() * Math.PI * 2, r = (3 + Math.random() * 7) * TILE;
-      h.gx += Math.cos(a) * r; h.gy += Math.sin(a) * r; h.t = 8 + Math.random() * 10;
+      const [gx, gy] = wanderTarget(h.gx, h.gy, 3, 7);
+      h.gx = gx; h.gy = gy; h.t = 8 + Math.random() * 10;
     }
   }
 }
@@ -954,7 +965,7 @@ function updateZombies(dt) {
   for (const id of hordes.keys()) if (!alive.has(id)) hordes.delete(id);
   zSpawnT -= dt;
   if (zSpawnT <= 0) {
-    zSpawnT = 8 + Math.random() * 10;
+    zSpawnT = 7 + Math.random() * 8;
     const size = pickHordeSize();
     if (zombies.length + size <= Z_CAP) spawnGroup(size);
   }
@@ -1406,7 +1417,7 @@ function giveItem(item) {
 let bodyLabelData = null, bodyBase = null;
 function prepareInventoryArt() {
   const c = document.createElement('canvas'); c.width = INV_W; c.height = INV_BASE_H;
-  const g = c.getContext('2d'); g.drawImage(IMG.bodyLabels, 0, 0);
+  const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(IMG.bodyLabels, 0, 0);
   const d = g.getImageData(0, 0, INV_W, INV_BASE_H).data;
   bodyLabelData = new Uint8Array(INV_W * INV_BASE_H);
   for (let i = 0; i < bodyLabelData.length; i++) bodyLabelData[i] = d[i * 4 + 3] ? d[i * 4] : 0;
@@ -1652,7 +1663,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
-  zombies = []; hordes = new Map(); zSpawnT = 12; inv = newInventory();
+  zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory();
   startPlaying();
   saveGame();
 }

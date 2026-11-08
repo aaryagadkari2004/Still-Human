@@ -73,6 +73,8 @@ right-click to remove one, C to re-centre.
   and slows bleeding; bandage heals more and stops it; first aid kit fully heals the part and stops
   it; antiseptic is kept for infection (coming later). Shirts, hoodies, jeans and beanies can be torn
   into rags (right-click).
+- Headwear shows on your character in every animation and protects your head: beanie 5%, bike
+  helmet 25%, hard hat 35%, military helmet 50%, motorcycle helmet 60% less damage to the head.
 - Searching: hold E at a fridge, counter, dresser or shelves; contents open in a panel beside the
   inventory. Early items: bandages and first aid kits (stop bleeding), food and water (for later),
   kitchen knife and hatchet (weapons), clothes, and small/medium/large backpacks.

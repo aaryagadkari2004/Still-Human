@@ -37,6 +37,9 @@ const ICONS = {
   juice: ['itemsFood', 0, 1], chips: ['itemsFood', 1, 1], bread: ['itemsFood', 2, 1],
   // Weapon icons are drawn small on their sheet, so they're shown at 2x.
   knife: ['itemsMelee', 0, 0, 2], hatchet: ['itemsMelee', 1, 0, 2], axe: ['itemsMelee', 2, 0, 2], pipe: ['itemsMelee', 3, 0, 2],
+  // Headwear icons come from the front-facing frame of the worn sprite, at 2x.
+  beanie: ['wearBeanie', 0, 0, 2, 64], bikehelmet: ['wearBike', 0, 0, 2, 64], hardhat: ['wearHardhat', 0, 0, 2, 64],
+  motohelmet: ['wearMoto', 0, 0, 2, 64], militaryhelmet: ['wearMilitary', 0, 0, 2, 64],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -44,10 +47,10 @@ const iconCache = {};
 function iconFor(key) {
   if (key in iconCache) return iconCache[key];
   const def = ICONS[key]; if (!def || !IMG[def[0]]) return (iconCache[key] = null);
-  const [sheet, c, r] = def, t = document.createElement('canvas'); t.width = t.height = 32;
-  const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(IMG[sheet], c * 32, r * 32, 32, 32, 0, 0, 32, 32);
-  const d = g.getImageData(0, 0, 32, 32).data; let x0 = 32, y0 = 32, x1 = -1, y1 = -1;
-  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) if (d[(y * 32 + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  const [sheet, c, r] = def, cell = def[4] || 32, t = document.createElement('canvas'); t.width = t.height = cell;
+  const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(IMG[sheet], c * cell, r * cell, cell, cell, 0, 0, cell, cell);
+  const d = g.getImageData(0, 0, cell, cell).data; let x0 = cell, y0 = cell, x1 = -1, y1 = -1;
+  for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) if (d[(y * cell + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
   if (x1 < 0) return (iconCache[key] = null);
   const sc = def[3] || 1, w = x1 - x0 + 1, h = y1 - y0 + 1;
   const out = document.createElement('canvas'); out.width = w * sc; out.height = h * sc;
@@ -370,7 +373,11 @@ function hurtPlayer(amount, cause, fromX, fromY) {
   if (state === 'map') closeMap();
   if (player.god) return;
   const part = fromX != null ? pickHitPart(fromX, fromY) : BODY_PARTS[1];
-  const dmg = amount * part.mult * (0.8 + Math.random() * 0.4);
+  let dmg = amount * part.mult * (0.8 + Math.random() * 0.4);
+  // Worn gear stops part of the damage to the body part it covers.
+  let cover = 0;
+  for (const id in inv.equip) { const it = inv.equip[id], def = it && (ITEMS[it.key] || it); if (def && def.protect && def.protect[part.id]) cover += def.protect[part.id]; }
+  dmg *= 1 - Math.min(0.8, cover);
   player.parts[part.id] = Math.max(0, player.parts[part.id] - dmg);
   player.lastHit = part.id; player.lastHitT = performance.now();
   player.wounds[part.id] = { t: 0, clotted: false }; // a fresh hit reopens the wound
@@ -1526,6 +1533,11 @@ function renderWorld(camX, camY, withPlayer) {
     if (o.k === -1) {
       const [fx, fy] = playerFrame(player);
       bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
+      // Worn gear is drawn on top, frame for frame.
+      for (const slot of ['helmet']) {
+        const it = inv.equip[slot], def = it && (ITEMS[it.key] || it);
+        if (def && def.wear && IMG[def.wear]) bctx.drawImage(IMG[def.wear], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
+      }
       continue;
     }
     if (o.k === -2) {
@@ -1989,6 +2001,12 @@ function renderContainerPanel(g, H) {
   if (container.items.every(x => !x)) pixelText(g, 'EMPTY', Math.round(w / 2 - textWidth('EMPTY') / 2), 34 + Math.ceil(container.items.length / 2) * 36 + 4, UI_DIM);
   pixelText(g, 'RIGHT-CLICK: USE', 9, H - 14, UI_DIM);
 }
+function itemLabel(it) {
+  const def = ITEMS[it.key] || it;
+  if (def.protect) { const [p, v] = Object.entries(def.protect)[0]; return `${def.name} - ${BODY_PARTS.find(b => b.id === p).name} +${Math.round(v * 100)}%`; }
+  if (def.weapon && WEAPONS[def.weapon]) return def.name;
+  return def.name;
+}
 function renderInventory(now) {
   const H = invHeight(), rows = invRows(), OX = invOX();
   if (invCanvas.width !== INV_W + OX || invCanvas.height !== H) { invCanvas.width = INV_W + OX; invCanvas.height = H; layoutInventory(); }
@@ -2032,7 +2050,7 @@ function renderInventory(now) {
   }
   // Hovered item name, or a message.
   let tip = invMsg && now < invMsg.until ? invMsg.t : invDrag && invDrag.item.use === 'medical' ? 'Drop on a body part to treat it'
-    : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? getItem(invHover.slot).name : null);
+    : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? itemLabel(getItem(invHover.slot)) : null);
   if (tip) {
     const w = textWidth(tip) + 8;
     g.fillStyle = '#0c1213'; g.fillRect(Math.round(INV_W / 2 - w / 2), H - 12, w, 9);
@@ -2112,7 +2130,12 @@ const ITEMS = {
   crowbar:  { name: 'Crowbar', cat: 'weapon', abbr: 'CRW', weapon: 'crowbar' },
   pan:      { name: 'Frying pan', cat: 'weapon', abbr: 'PAN', weapon: 'pan' },
   rollingpin: { name: 'Rolling pin', cat: 'weapon', abbr: 'PIN', weapon: 'rollingpin' },
-  beanie:   { name: 'Wool beanie', cat: 'helmet', abbr: 'HAT' },
+  // Headwear. wear = sprite drawn over the player; protect = share of damage to that body part stopped.
+  beanie:         { name: 'Wool beanie', cat: 'helmet', abbr: 'HAT', wear: 'wearBeanie', protect: { head: 0.05 } },
+  bikehelmet:     { name: 'Bike helmet', cat: 'helmet', abbr: 'BIK', wear: 'wearBike', protect: { head: 0.25 } },
+  hardhat:        { name: 'Hard hat', cat: 'helmet', abbr: 'HRD', wear: 'wearHardhat', protect: { head: 0.35 } },
+  militaryhelmet: { name: 'Military helmet', cat: 'helmet', abbr: 'MIL', wear: 'wearMilitary', protect: { head: 0.5 } },
+  motohelmet:     { name: 'Motorcycle helmet', cat: 'helmet', abbr: 'MOT', wear: 'wearMoto', protect: { head: 0.6 } },
   flannel:  { name: 'Flannel shirt', cat: 'clothes', abbr: 'SHT' },
   hoodie:   { name: 'Hoodie', cat: 'clothes', abbr: 'HOD' },
   jeans:    { name: 'Jeans', cat: 'pants', abbr: 'JNS' },
@@ -2126,8 +2149,8 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['bagM', 0.04], ['bagL', 0.015]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
 // cooldown = seconds between swings, noise in tiles.

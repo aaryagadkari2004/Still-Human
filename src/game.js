@@ -537,14 +537,15 @@ function alertAround(z) {
     }
   }
 }
+// Zombie animation for investigating counts as walking.
 function updateZombie(z, dt) {
   const T = ZOMBIE_TYPES[z.type];
   const ddx = player.x - z.x, ddy = player.y - z.y, d = Math.hypot(ddx, ddy);
   const alive = player.hp > 0;
-  // Walls block sight: a zombie in a different building (or outside while you're in one)
-  // only notices you if it's close enough to hear you.
+  // Walls block sight. In the open a zombie sees what's in front of it; between inside and
+  // outside it can only see you through a window or open doorway near you.
   const zb = buildingAt(z.x, z.y - 4), pb = buildingAt(player.x, player.y - 4), together = zb === pb;
-  const sees = alive && (together ? d < T.sight : d < 4 * TILE);
+  const sees = alive && (together ? inView(z, ddx, ddy, d, T) : (d < 1.5 * TILE || (pb && !zb && d < T.sight && seesThroughOpening(z, pb))));
   z.cd = Math.max(0, z.cd - dt);
   if (z.flash > 0) z.flash -= dt;
   if (z.dead) { z.deadT += dt; return; }
@@ -585,6 +586,12 @@ function updateZombie(z, dt) {
     if (together && d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
     else if (!together || d > T.reach - 4) goTo(player.x, player.y, zSpeed(z, T));
     else { z.moving = false; faceToward(z, ddx, ddy); }
+  } else if (z.mode === 'investigate') {
+    // Heard something: shuffle over to where it came from, look around, then lose interest.
+    z.lostT += dt;
+    if (Math.hypot(z.gx - z.x, z.gy - z.y) > 8 && z.lostT < 25) goTo(z.gx, z.gy, zSpeed(z, T) * 0.75);
+    else { z.mode = 'idle'; z.t = 3 + Math.random() * 4; z.moving = false; if (z.bang) z.bang = null; }
+    if (z.mode === 'bang') { z.mode = 'idle'; z.t = 2; z.bang = null; }   // a noise alone won't make them break in
   } else if (z.mode === 'chase' || z.mode === 'bang') {
     // Lost sight (or was alerted): head to where the player was last seen, then give up.
     z.lostT += dt;
@@ -619,7 +626,7 @@ function updateZombie(z, dt) {
       z.mode = 'wander'; z.gx = gx; z.gy = gy; z.t = 12;
     }
   }
-  z.anim += dt * (z.moving ? T.animRate * z.speedMul * (z.mode === 'chase' ? 1 : 0.6) : 2.5);
+  z.anim += dt * (z.moving ? T.animRate * z.speedMul * (z.mode === 'chase' ? 1 : z.mode === 'investigate' ? 0.8 : 0.6) : 2.5);
 }
 function zombieFrame(z) {
   const f = Math.floor(z.anim) % 4;
@@ -661,14 +668,9 @@ function spawnGroup(size) {
   }
   return 0;
 }
-// Zombies wander aimlessly, but tend to drift toward wherever the living are,
-// so they gradually find their way into the player's area.
+// Zombies wander aimlessly; they only come your way if they see or hear you.
 function wanderTarget(x, y, minT, maxT) {
-  let a = Math.random() * Math.PI * 2;
-  if (player && Math.random() < 0.6) {
-    const toward = Math.atan2(player.y - y, player.x - x);
-    a = toward + (Math.random() - 0.5) * 1.6;
-  }
+  const a = Math.random() * Math.PI * 2;
   const r = (minT + Math.random() * (maxT - minT)) * TILE;
   return [x + Math.cos(a) * r, y + Math.sin(a) * r];
 }
@@ -817,7 +819,7 @@ function updateAttack(dt) {
       if (da > W.arc * Math.PI / 180 && d > 12) continue;
       if (d < bd) { bd = d; best = z; }
     }
-    if (best) hitZombie(best, W, a.ang);
+    if (best) { hitZombie(best, W, a.ang); makeNoise(p.x, p.y, NOISE.punch, true); }
   }
   if (a.t >= W.duration) { p.attack = null; p.attackCd = W.cooldown - W.duration; }
 }
@@ -1052,9 +1054,11 @@ function updateBanging(dt) {
     const s = bState(c.b), o = layoutBuilding(c.b).openings[c.i], st = openingState(c.b, c.i);
     const rec = s.o[c.i] || (s.o[c.i] = { st, hp: undefined });
     if (rec.hp == null) rec.hp = o.kind === 'door' ? OPEN_HP.door : st === 'boarded' ? OPEN_HP.boarded : OPEN_HP.window;
+    c.b._bangNoise = (c.b._bangNoise || 0) - dt;
+    if (c.b._bangNoise <= 0) { const [nx, ny] = openingCenter(c.b, o); makeNoise(nx, ny + 6, NOISE.bang); c.b._bangNoise = 1.5; }
     rec.hp -= dt * c.n * BANG_RATE;
     c.b._shake = 0.15;
-    if (rec.hp <= 0) setOpening(c.b, c.i, 'broken');
+    if (rec.hp <= 0) { setOpening(c.b, c.i, 'broken'); const [nx, ny] = openingCenter(c.b, o); makeNoise(nx, ny + 6, NOISE.break); }
   }
 }
 
@@ -1356,8 +1360,9 @@ function updateInteract(dt) {
   interact = findInteract();
   if (interact && interact.type === 'search' && keys.has('e')) {
     const s = bState(interact.b);
-    if (s.c[interact.f.i]) { if (searchT >= 0) openContainer(interact); searchT = -1; return; }
+    if (s.c[interact.f.i]) { if (searchT >= 0) { openContainer(interact); makeNoise(interact.x, interact.y + 12, NOISE.search * 0.6, true); } searchT = -1; return; }
     if (searchT < 0) return;
+    if (searchT === 0) makeNoise(interact.x, interact.y + 12, NOISE.search, true);
     searchT += dt;
     if (searchT >= SEARCH_TIME) { s.c[interact.f.i] = rollLoot(interact.b, interact.f); openContainer(interact); searchT = -1; }
   } else if (!keys.has('e')) searchT = 0;
@@ -1365,6 +1370,7 @@ function updateInteract(dt) {
 function pressInteract() {
   if (!interact || interact.type !== 'door') return;
   const st = openingState(interact.b, interact.i);
+  makeNoise(interact.x, interact.y + 4, NOISE.door, true);
   if (st === 'closed') setOpening(interact.b, interact.i, 'open');
   else if (st === 'open') {
     // Can't shut a door on someone standing in it.
@@ -1387,6 +1393,74 @@ function renderInteractPrompt(camX, camY) {
     bctx.fillStyle = '#000'; bctx.fillRect(x - 3, y + 8, w, 3);
     bctx.fillStyle = '#c8b46a'; bctx.fillRect(x - 3, y + 8, Math.round(w * Math.min(1, searchT / SEARCH_TIME)), 3);
   }
+}
+
+// ---- Noise ------------------------------------------------------------------------------------
+// Zombies hunt by sight and by sound. Every noise has a radius (in tiles); zombies inside it that
+// aren't already chasing you walk over to investigate where it came from (roughly — the further
+// away they heard it, the vaguer their idea of where). Walls muffle sound going in or out.
+const NOISE = {
+  walk: 2.5,      // footsteps: quiet
+  run: 7,         // running: carries a fair way
+  punch: 4,       // a fight
+  door: 8,        // opening or closing a door
+  search: 6,      // rummaging through drawers and cupboards
+  bang: 10,       // zombies hammering on a door or window
+  break: 13,      // a door or window giving way
+};
+const MUFFLE = 0.55;          // walls cut sound to about half
+let noiseRings = [];
+function makeNoise(x, y, tiles, fromPlayer) {
+  const src = buildingAt(x, y - 4);
+  for (const z of zombies) {
+    if (z.dead || z.mode === 'chase' || z.mode === 'attack' || z.mode === 'bang') continue;
+    const zb = buildingAt(z.x, z.y - 4);
+    const r = tiles * TILE * (zb === src ? 1 : MUFFLE);
+    const d = Math.hypot(z.x - x, z.y - y);
+    if (d > r) continue;
+    const err = d * 0.18;
+    z.mode = 'investigate'; z.lostT = 0; z.t = 0;
+    z.gx = x + (Math.random() * 2 - 1) * err; z.gy = y + (Math.random() * 2 - 1) * err;
+  }
+  if (fromPlayer) noiseRings.push({ x, y, r: tiles * TILE, t: 0 });
+}
+let stepNoiseT = 0;
+function updatePlayerNoise(dt) {
+  stepNoiseT -= dt;
+  if (!player.moving || stepNoiseT > 0) return;
+  if (player.running) { makeNoise(player.x, player.y, NOISE.run, true); stepNoiseT = 0.45; }
+  else { makeNoise(player.x, player.y, NOISE.walk, true); stepNoiseT = 0.7; }
+}
+function renderNoiseRings(dt) {
+  for (const n of noiseRings) {
+    n.t += dt;
+    const p = Math.min(1, n.t / 0.7);
+    bctx.strokeStyle = `rgba(235,225,190,${0.22 * (1 - p)})`; bctx.lineWidth = 1;
+    bctx.beginPath(); bctx.ellipse(Math.round(n.x), Math.round(n.y - 2), n.r * (0.25 + 0.75 * p), n.r * (0.25 + 0.75 * p) * 0.55, 0, 0, Math.PI * 2); bctx.stroke();
+  }
+  noiseRings = noiseRings.filter(n => n.t < 0.7);
+}
+// Can a zombie outside see into the player's house? Only through a window or an open doorway
+// close to the player, and only from the outside of that opening.
+function seesThroughOpening(z, pb) {
+  const L = layoutBuilding(pb);
+  for (let i = 0; i < L.openings.length; i++) {
+    const o = L.openings[i]; if (!o.outer) continue;
+    const st = openingState(pb, i);
+    if (o.kind === 'door' ? st === 'closed' : st === 'boarded') continue;
+    const [cx, cy] = openingCenter(pb, o), [nx, ny] = openingNormal(pb, o);
+    if (Math.hypot(player.x - cx, player.y - 8 - cy) > 3 * TILE) continue;
+    const dz = Math.hypot(z.x - cx, z.y - 8 - cy);
+    if (dz > 6 * TILE) continue;
+    if ((z.x - cx) * nx + (z.y - 8 - cy) * ny > 4) return true;
+  }
+  return false;
+}
+// Zombies notice what's in front of them; up close they notice you from any direction.
+function inView(z, dx, dy, d, T) {
+  if (d < 3 * TILE || z.mode === 'chase' || z.mode === 'bang' || z.mode === 'attack') return d < T.sight;
+  const f = DIR_VEC[z.dir];
+  return d < T.sight && (dx * f[0] + dy * f[1]) / d > 0.35;   // roughly a 140° cone
 }
 
 // ---- World rendering ---------------------------------------------------------------------------
@@ -1468,7 +1542,7 @@ function renderWorld(camX, camY, withPlayer) {
     bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (fade) bctx.globalAlpha = 1;
   }
-  if (withPlayer) renderInteractPrompt(camX, camY);
+  if (withPlayer) { renderNoiseRings(1 / 60); renderInteractPrompt(camX, camY); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
   if (withPlayer) renderInsideDarkness(camX, camY);
 }
@@ -2235,7 +2309,7 @@ function loop(now) {
     renderWorld(Math.round(menuCam.x), Math.round(menuCam.y), false);
   } else if (player) {
     if (state === 'play' || state === 'map') {
-      if (state === 'play') { updatePlayer(dt); updateAttack(dt); updateInteract(dt); }
+      if (state === 'play') { updatePlayer(dt); updateAttack(dt); updateInteract(dt); updatePlayerNoise(dt); }
       updateCorpses(dt);
       checkResidents();
       updateBanging(dt);
@@ -2300,6 +2374,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

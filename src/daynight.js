@@ -77,7 +77,7 @@ function renderNight(camX, camY) {
     bctx.globalCompositeOperation = 'source-over';
   }
   if (n < 0.01) return;
-  const T = tonight(), dark = T.dark * n;
+  const T = tonight(), dark = T.dark * n * (1 - 0.75 * flash);   // lightning lights up the night
   if (nightC.width !== BW || nightC.height !== BH) { nightC.width = BW; nightC.height = BH; }
   const g = nightG;
   g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, BW, BH);

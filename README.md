@@ -71,6 +71,11 @@ right-click to remove one, C to re-centre.
   distance fades to black; how dark it gets changes from night to night. Campfires, tents and houses
   (through their windows and open doors) give off light, and the lights are on inside houses.
   Zombies spawn a bit more often at night.
+- Weather changes every few minutes, blending in over half a minute: clear, overcast (greyer and
+  dimmer), rain (pixel rain streaks and splashes; it drowns out sound, so zombies hear less far),
+  thunderstorms (heavy wind-blown rain, darker skies, and lightning that flashes the whole screen
+  and briefly lights up the night) and fog (drifting fog banks, clear only around you; zombies see
+  much less far). Fog is more likely at night and around dawn and dusk. Rain stays outside houses.
 - Wild animals roam the world (more in the woods):
   - Bears (forest only) are territorial: get within about 4 tiles and a bear faces you, then
     charges. They maul zombies that wander close too, and return to their spot after a chase.
@@ -125,6 +130,7 @@ src/buildings_world.js   house floor plans and where hamlets and cabins go
 src/game.js              rendering, player, zombies, inventory, map, menus, saves
 src/animals.js           wild animals (inlined into game.js by the build)
 src/daynight.js          day/night cycle and lighting (inlined into game.js by the build)
+src/weather.js           weather: rain, storms, lightning, fog (inlined into game.js by the build)
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
 tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)

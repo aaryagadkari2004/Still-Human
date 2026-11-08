@@ -827,6 +827,8 @@ function updateZombies(dt) {
 
 // {{DAYNIGHT}}
 
+// {{WEATHER}}
+
 // ---- Bleeding ------------------------------------------------------------------------------------
 // A body part starts bleeding once its health drops below a threshold; the worse the wound, the
 // faster it bleeds (health % lost per second). Light bleeding clots on its own after a while
@@ -1622,6 +1624,7 @@ const NOISE = {
 const MUFFLE = 0.55;          // walls cut sound to about half
 function makeNoise(x, y, tiles, fromPlayer) {
   const src = buildingAt(x, y - 4);
+  tiles *= weatherHearMul();   // rain drowns sounds out
   if (!src) scareAnimals(x, y, tiles);
   for (const z of zombies) {
     if (z.dead || z.mode === 'chase' || z.mode === 'attack' || z.mode === 'bang') continue;
@@ -1662,7 +1665,7 @@ function seesThroughOpening(z, pb) {
 // Zombies notice what's in front of them; up close they notice you from any direction.
 function inView(z, dx, dy, d, T) {
   // A crouching player is only spotted from about 60% as far, and has to be closer to be noticed from behind.
-  const sight = T.sight * (player.crouch ? 0.6 : 1), near = (player.crouch ? 2 : 3) * TILE;
+  const sight = T.sight * (player.crouch ? 0.6 : 1) * weatherSightMul(), near = (player.crouch ? 2 : 3) * TILE;
   if (d < near || z.mode === 'chase' || z.mode === 'bang' || z.mode === 'attack') return d < sight;
   const f = DIR_VEC[z.dir];
   return d < sight && (dx * f[0] + dy * f[1]) / d > 0.35;   // roughly a 140° cone
@@ -1787,7 +1790,7 @@ function renderWorld(camX, camY, withPlayer) {
   }
   if (withPlayer) { renderSwing(); renderInteractDots(); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (withPlayer) { renderNight(camX, camY); renderInsideDarkness(camX, camY); }
+  if (withPlayer) { renderWeather(camX, camY); renderNight(camX, camY); renderInsideDarkness(camX, camY); renderLightning(); }
 }
 
 
@@ -2558,7 +2561,7 @@ function newGame(n) {
   slot = n;
   const seed = (Math.random() * 2 ** 32) >>> 0;
   world = new WorldGen(seed); resetCaches();
-  explored = new Map(); markers = []; playTime = 0; clock = START_CLOCK; created = Date.now();
+  explored = new Map(); markers = []; playTime = 0; clock = START_CLOCK; loadWeather(null); created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
   zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null; searching = null;
@@ -2579,7 +2582,7 @@ function loadGame(n) {
   world = new WorldGen(s.seed); resetCaches();
   player = newPlayer(s.player.x, s.player.y); player.dir = s.player.dir || 'S';
   explored = new Map(Object.entries(s.explored || {}).map(([k, v]) => [k, unpackBits(v)]));
-  markers = s.markers || []; playTime = s.playTime || 0; clock = s.clock ?? START_CLOCK; created = s.created || Date.now();
+  markers = s.markers || []; playTime = s.playTime || 0; clock = s.clock ?? START_CLOCK; loadWeather(s.weather); created = s.created || Date.now();
   if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
@@ -2605,7 +2608,7 @@ function saveGame() {
   const ex = {};
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
-    v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime), clock: Math.floor(clock),
+    v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime), clock: Math.floor(clock), weather: saveWeather(),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds, hunger: Math.round(player.hunger * 10) / 10, thirst: Math.round(player.thirst * 10) / 10 },
     zombies: zombies.filter(z => !z.dead).map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, home: z.home, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     animals: saveAnimals(),
@@ -2640,7 +2643,7 @@ function loop(now) {
       checkResidents();
       updateBanging(dt);
       if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
-      playTime += dt; clock += dt;
+      playTime += dt; clock += dt; updateWeather(dt);
       updateZombies(dt);
       updateAnimals(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }
@@ -2702,6 +2705,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, get clock() { return clock; }, set clock(v) { clock = v; }, nightness, phaseName, dayNumber, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, get clock() { return clock; }, setWeather, get weather() { return weather; }, get flash() { return flash; }, set clock(v) { clock = v; }, nightness, phaseName, dayNumber, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

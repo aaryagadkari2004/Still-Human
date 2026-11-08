@@ -78,6 +78,7 @@ function makeNoise(seed) {
     return x1 + (x2 - x1) * v; // roughly -1..1
   };
 }
+const makeNoiseField = makeNoise;   // alias: game.js has its own makeNoise (for sounds)
 function fbm(n, x, y, oct) {
   let amp = 1, f = 1, sum = 0, tot = 0;
   for (let i = 0; i < oct; i++) { sum += amp * n(x * f, y * f); tot += amp; amp *= 0.5; f *= 2; }

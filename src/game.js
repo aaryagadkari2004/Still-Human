@@ -1536,9 +1536,10 @@ function renderInteractDots() {
 let HAND_CURSOR = 'pointer';
 function prepareCursor() {
   const img = IMG.cursorHand; if (!img) return;
-  const c = document.createElement('canvas'); c.width = img.width * 2; c.height = img.height * 2;
-  const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(img, 0, 0, c.width, c.height);
-  HAND_CURSOR = `url(${c.toDataURL()}) 14 0, pointer`;   // hotspot at the fingertip
+  // Native size (17x25), about the same as a normal system cursor; hotspot at the fingertip.
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  c.getContext('2d').drawImage(img, 0, 0);
+  HAND_CURSOR = `url(${c.toDataURL()}) 7 0, pointer`;
 }
 
 // ---- Noise ------------------------------------------------------------------------------------

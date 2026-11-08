@@ -37,6 +37,7 @@ const ICONS = {
   juice: ['itemsFood', 0, 1], chips: ['itemsFood', 1, 1], bread: ['itemsFood', 2, 1],
   // Weapon icons are drawn small on their sheet, so they're shown at 2x.
   knife: ['itemsMelee', 0, 0, 2], hatchet: ['itemsMelee', 1, 0, 2], axe: ['itemsMelee', 2, 0, 2], pipe: ['itemsMelee', 3, 0, 2],
+  rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
 const iconCache = {};
@@ -731,7 +732,7 @@ function updateBleeding(dt) {
     const w = player.wounds[b.id] || (player.wounds[b.id] = { t: 0, clotted: false });
     w.t += dt;
     if (L.clotsAfter && w.t >= L.clotsAfter) { w.clotted = true; continue; }
-    player.parts[b.id] = Math.max(0, player.parts[b.id] - L.rate * dt);
+    player.parts[b.id] = Math.max(0, player.parts[b.id] - L.rate * (w.slowed ? 0.4 : 1) * dt);
     total += lvl;
     if (player.parts[b.id] <= 0) { startDying(BLED_OUT[b.id]); return; }
   }
@@ -2041,7 +2042,8 @@ function renderInventory(now) {
     pixelText(g, t, BODY_BOX.x + 58 - Math.floor(textWidth(t) / 2), 178, alt ? '#ff5a45' : v > 60 ? UI_ACCENT : v > 30 ? '#e0b45a' : '#e8644f');
   }
   // Hovered item name, or a message.
-  let tip = invMsg && now < invMsg.until ? invMsg.t : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? getItem(invHover.slot).name : null);
+  let tip = invMsg && now < invMsg.until ? invMsg.t : invDrag && invDrag.item.use === 'medical' ? 'Drop on a body part to treat it'
+    : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? getItem(invHover.slot).name : null);
   if (tip) {
     const w = textWidth(tip) + 8;
     g.fillStyle = '#0c1213'; g.fillRect(Math.round(INV_W / 2 - w / 2), H - 12, w, 9);
@@ -2077,7 +2079,9 @@ invCanvas.addEventListener('mousedown', e => {
 window.addEventListener('mouseup', e => {
   if (!invDrag) return;
   const [x, y] = invPoint(e), to = anySlotAt(x, y);
-  if (to) moveItem(invDrag.from, to);
+  const part = bodyPartAt(x - invOX(), y);
+  if (part && invDrag.item.use === 'medical') { useItem(invDrag.from, part); }   // drop a medical item on a body part to treat it
+  else if (to) moveItem(invDrag.from, to);
   invDrag = null;
 });
 invCanvas.addEventListener('contextmenu', e => {
@@ -2098,8 +2102,11 @@ function closeInventory() {
 // ---- Items and loot ----------------------------------------------------------------------------
 // abbr is shown on the placeholder icon until the item has art.
 const ITEMS = {
-  bandage:  { name: 'Bandage', cat: 'misc', abbr: 'BND', use: 'bandage' },
-  firstaid: { name: 'First aid kit', cat: 'misc', abbr: 'AID', use: 'firstaid' },
+  // Medical, weakest to strongest. heal = health % restored to the treated part.
+  rag:        { name: 'Cloth rag', cat: 'misc', abbr: 'RAG', use: 'medical', heal: 8, bleed: 'slow' },
+  bandage:    { name: 'Bandage', cat: 'misc', abbr: 'BND', use: 'medical', heal: 20, bleed: 'stop' },
+  firstaid:   { name: 'First aid kit', cat: 'misc', abbr: 'AID', use: 'medical', heal: 100, bleed: 'stop' },
+  antiseptic: { name: 'Antiseptic', cat: 'misc', abbr: 'ANT', use: 'antiseptic' },
   // Food and drink: how much hunger / thirst each restores (negative = makes it worse).
   beans:    { name: 'Canned beans', cat: 'misc', abbr: 'CAN', use: 'eat', food: 32, drink: 2 },
   soup:     { name: 'Canned soup', cat: 'misc', abbr: 'SUP', use: 'eat', food: 24, drink: 10 },
@@ -2129,9 +2136,9 @@ function makeItem(key) { return { key, ...ITEMS[key] }; }
 // Each container rolls every line once: [item, chance]. Most finds are small.
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
-  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['bandage', 0.12], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['bandage', 0.1]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['bandage', 0.22], ['firstaid', 0.05], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['bagM', 0.04], ['bagL', 0.015]] },
+  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['flannel', 0.2], ['hoodie', 0.15], ['jeans', 0.2], ['beanie', 0.12], ['boots', 0.08], ['bagS', 0.07], ['rag', 0.25], ['bandage', 0.08]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
 // cooldown = seconds between swings, noise in tiles.
@@ -2159,19 +2166,34 @@ function openContainer(it) {
   if (!invOpen) openInventory(); else layoutInventory();
 }
 function closeContainer() { container = null; if (invOpen) layoutInventory(); }
-function useItem(ref) {
+// Treats one body part. With no part given: the worst bleeding one, else the most hurt.
+function treat(item, part) {
+  const def = ITEMS[item.key] || item;
+  if (!part) {
+    let wl = 0;
+    for (const p of BODY_PARTS) { const l = bleedLevel(p.id); if (l > wl) { wl = l; part = p; } }
+    if (!part) part = BODY_PARTS.reduce((a, p) => player.parts[p.id] < player.parts[a.id] ? p : a, BODY_PARTS[0]);
+  }
+  if (player.parts[part.id] >= 100 && !bleedLevel(part.id)) { flashMsg(part.name + ' is fine'); return false; }
+  const w = player.wounds[part.id] || (player.wounds[part.id] = { t: 0, clotted: false });
+  if (def.bleed === 'stop') w.bandaged = true;
+  else if (def.bleed === 'slow') w.slowed = true;
+  player.parts[part.id] = Math.min(100, player.parts[part.id] + def.heal);
+  flashMsg((item.key === 'firstaid' ? 'Treated ' : item.key === 'rag' ? 'Wrapped ' : 'Bandaged ') + part.name.toLowerCase());
+  return true;
+}
+// Clothes can be torn into rags.
+const TEARABLE = { flannel: 2, hoodie: 2, jeans: 2, beanie: 1 };
+function useItem(ref, part) {
   const item = getItem(ref); if (!item) return;
-  if (item.use === 'bandage' || item.use === 'firstaid') {
-    // Treat the worst bleeding wound; a first aid kit also restores some health there.
-    let worst = null, wl = 0;
-    for (const p of BODY_PARTS) { const l = bleedLevel(p.id); if (l > wl) { wl = l; worst = p; } }
-    if (!worst && item.use === 'bandage') { flashMsg('Nothing is bleeding'); return; }
-    if (!worst) worst = BODY_PARTS.reduce((a, p) => player.parts[p.id] < player.parts[a.id] ? p : a, BODY_PARTS[0]);
-    const w = player.wounds[worst.id] || (player.wounds[worst.id] = { t: 0, clotted: false });
-    w.bandaged = true;
-    if (item.use === 'firstaid') player.parts[worst.id] = Math.min(100, player.parts[worst.id] + 25);
-    setItem(ref, null);
-    flashMsg((item.use === 'firstaid' ? 'Treated ' : 'Bandaged ') + worst.name.toLowerCase());
+  if (item.use === 'medical') {
+    if (treat(item, part)) setItem(ref, null);
+  } else if (item.use === 'antiseptic') {
+    flashMsg('Nothing to disinfect yet');
+  } else if (TEARABLE[item.key] && ref.kind !== 'equip') {
+    setItem(ref, makeItem('rag'));
+    for (let i = 1; i < TEARABLE[item.key]; i++) if (!giveItem(makeItem('rag'))) break;
+    flashMsg('Tore ' + item.name.toLowerCase() + ' into rags');
   } else if (item.use === 'eat') {
     const def = ITEMS[item.key] || item;
     player.hunger = Math.max(0, Math.min(100, player.hunger + (def.food || 0)));

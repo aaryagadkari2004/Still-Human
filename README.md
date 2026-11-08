@@ -70,6 +70,10 @@ right-click to remove one, C to re-centre.
   and unbroken windows block movement. Zombies find their way in through open doors and broken
   windows; 3 or more together can break doors and windows down (fewer can't). Some houses have
   zombies inside.
+- Healing (right-click to treat the worst wound, or drag onto a body part): cloth rag heals a little
+  and slows bleeding; bandage heals more and stops it; first aid kit fully heals the part and stops
+  it; antiseptic is kept for infection (coming later). Shirts, hoodies, jeans and beanies can be torn
+  into rags (right-click).
 - Searching: hold E at a fridge, counter, dresser or shelves; contents open in a panel beside the
   inventory. Early items: bandages and first aid kits (stop bleeding), food and water (for later),
   kitchen knife and hatchet (weapons), clothes, and small/medium/large backpacks.

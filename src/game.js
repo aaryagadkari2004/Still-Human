@@ -12,6 +12,7 @@ const bctx = buf.getContext('2d');
 let scale = 3, BW = 320, BH = 180;
 
 function resize() {
+  if (!vignette) makeVignette();
   const w = window.innerWidth, h = window.innerHeight;
   // Aim for roughly 20 x 11.5 tiles on screen, with whole-number pixel scaling.
   scale = Math.max(1, Math.round(Math.min(w / (TILE * 20), h / (TILE * 11.5))));
@@ -224,7 +225,7 @@ function blocked(x0, y0, x1, y1) {
 // ---- Player ------------------------------------------------------------------------------------
 const WALK = 72, RUN = 138;     // pixels per second (a tile is ~1 metre)
 const FEET_W = 14, FEET_H = 6;
-function newPlayer(x, y) { return { x, y, dir: 'S', moving: false, running: false, anim: 0 }; }
+function newPlayer(x, y) { return { x, y, dir: 'S', moving: false, running: false, anim: 0, hp: 100 }; }
 function feetBlocked(x, y) { return blocked(x - FEET_W / 2, y - FEET_H, x + FEET_W / 2, y); }
 
 function findSpawn(seedRand) {
@@ -278,6 +279,155 @@ function playerFrame(p) {
   return [f, p.moving ? DIR_ROW[p.dir] : IDLE_ROW[p.dir]];
 }
 
+// ---- Player health & hurt effects -----------------------------------------------------------
+const MAX_HP = 100;
+const hurtFx = { shake: 0, flash: 0, lagHp: MAX_HP, deathT: 0 };
+function hurtPlayer(amount, cause) {
+  if (state !== 'play' && state !== 'map') return;
+  if (state === 'map') closeMap();
+  player.hp = Math.max(0, player.hp - amount);
+  hurtFx.shake = 1; hurtFx.flash = 1;
+  if (player.hp <= 0) startDying(cause);
+}
+function updateHurtEffects(dt) {
+  hurtFx.shake = Math.max(0, hurtFx.shake - dt * 3.2);
+  hurtFx.flash = Math.max(0, hurtFx.flash - dt * 2.2);
+  if (player) {
+    // The pale "lag" bar drains toward real health after a short delay.
+    if (hurtFx.lagHp > player.hp) hurtFx.lagHp = Math.max(player.hp, hurtFx.lagHp - dt * 30 * (hurtFx.flash > 0.6 ? 0 : 1));
+    else hurtFx.lagHp = player.hp;
+  }
+}
+function shakeOffset() {
+  if (hurtFx.shake <= 0) return [0, 0];
+  const m = 2.5 * hurtFx.shake * hurtFx.shake;
+  return [Math.round((Math.random() * 2 - 1) * m), Math.round((Math.random() * 2 - 1) * m)];
+}
+
+// ---- Zombies ------------------------------------------------------------------------------------
+// Each type: art, speeds (px/s), health, attack, senses. New types go here.
+const ZOMBIE_TYPES = {
+  walker: {
+    img: 'zWalker', speed: 46, wanderSpeed: 18, hp: 100,
+    damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
+    sight: 8 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
+  },
+};
+const Z_CAP = 9;              // most zombies around the player at once
+const Z_DESPAWN = 42 * TILE;  // zombies further than this are removed
+let zombies = [];
+let zSpawnT = 0;
+function makeZombie(type, x, y) {
+  const T = ZOMBIE_TYPES[type];
+  return { type, x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
+    mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0 };
+}
+function faceToward(a, vx, vy) {
+  if (Math.abs(vx) > Math.abs(vy)) a.dir = vx > 0 ? 'E' : 'W'; else a.dir = vy > 0 ? 'S' : 'N';
+}
+function moveZombie(z, vx, vy, speed, dt) {
+  const len = Math.hypot(vx, vy); if (len < 0.001) { z.moving = false; return; }
+  let ux = vx / len, uy = vy / len;
+  if (z.detour > 0) { z.detour -= dt; ux = z.dx; uy = z.dy; }
+  const sp = speed * dt;
+  const ox = z.x, oy = z.y;
+  const tryMove = (nx, ny) => {
+    if (feetBlocked(nx, ny)) return false;
+    if (Math.hypot(nx - player.x, ny - player.y) < 20) return false;          // don't walk into the player
+    for (const o of zombies) if (o !== z && Math.hypot(nx - o.x, ny - o.y) < 13 && Math.hypot(z.x - o.x, z.y - o.y) >= 13) return false;
+    return true;
+  };
+  if (tryMove(z.x + ux * sp, z.y)) z.x += ux * sp;
+  if (tryMove(z.x, z.y + uy * sp)) z.y += uy * sp;
+  const moved = Math.hypot(z.x - ox, z.y - oy);
+  z.moving = moved > sp * 0.2;
+  faceToward(z, ux, uy);
+  // Stuck on a tree or shoreline: side-step for a moment.
+  if (moved < sp * 0.3) z.stuck += dt; else z.stuck = Math.max(0, z.stuck - dt);
+  if (z.stuck > 0.35 && z.detour <= 0) {
+    const side = Math.random() < 0.5 ? 1 : -1;
+    z.dx = -uy * side; z.dy = ux * side; z.detour = 0.5 + Math.random() * 0.5; z.stuck = 0;
+  }
+}
+function updateZombie(z, dt) {
+  const T = ZOMBIE_TYPES[z.type];
+  const ddx = player.x - z.x, ddy = player.y - z.y, d = Math.hypot(ddx, ddy);
+  const alive = player.hp > 0;
+  const sees = alive && (d < T.notice || d < T.sight);
+  z.cd = Math.max(0, z.cd - dt);
+
+  if (z.mode === 'attack') {
+    z.moving = false; faceToward(z, ddx, ddy);
+    z.atk -= dt;
+    if (z.atk <= 0) {
+      if (alive && d <= T.reach + 8) hurtPlayer(T.damage, 'Killed by a zombie.');
+      z.cd = T.cooldown; z.mode = 'chase';
+    }
+  } else if (sees) {
+    z.mode = 'chase'; z.lostT = 0; z.gx = player.x; z.gy = player.y;
+    if (d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
+    else if (d > T.reach - 4) moveZombie(z, ddx, ddy, T.speed, dt);
+    else { z.moving = false; faceToward(z, ddx, ddy); }
+  } else if (z.mode === 'chase') {
+    // Lost sight: walk to where the player was last seen, then give up.
+    z.lostT += dt;
+    const gx = z.gx - z.x, gy = z.gy - z.y;
+    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget) moveZombie(z, gx, gy, T.speed, dt);
+    else { z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false; }
+  } else if (z.mode === 'wander') {
+    const gx = z.gx - z.x, gy = z.gy - z.y;
+    z.t -= dt;
+    if (Math.hypot(gx, gy) < 4 || z.t <= 0) { z.mode = 'idle'; z.t = 2 + Math.random() * 4; z.moving = false; }
+    else moveZombie(z, gx, gy, T.wanderSpeed, dt);
+  } else {
+    z.moving = false; z.t -= dt;
+    if (z.t <= 0) {
+      const a = Math.random() * Math.PI * 2, r = (2 + Math.random() * 5) * TILE;
+      z.mode = 'wander'; z.gx = z.x + Math.cos(a) * r; z.gy = z.y + Math.sin(a) * r; z.t = 12;
+    }
+  }
+  z.anim += dt * (z.moving ? T.animRate * (z.mode === 'chase' ? 1 : 0.6) : 2.5);
+}
+function zombieFrame(z) {
+  const f = Math.floor(z.anim) % 4;
+  if (z.mode === 'attack') return [Math.floor((1 - z.atk / ZOMBIE_TYPES[z.type].windup) * 3.99), DIR_ROW[z.dir]];
+  return [f, z.moving ? DIR_ROW[z.dir] : IDLE_ROW[z.dir]];
+}
+function trySpawnZombie(minR, maxR) {
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2, r = (minR + Math.random() * (maxR - minR)) * TILE;
+    const x = player.x + Math.cos(a) * r, y = player.y + Math.sin(a) * r;
+    // Never pop in on screen.
+    if (Math.abs(x - player.x) < BW / 2 + 48 && Math.abs(y - player.y) < BH / 2 + 96) continue;
+    if (tileAt(Math.floor(x / TILE), Math.floor(y / TILE)).t === T_WATER || feetBlocked(x, y)) continue;
+    zombies.push(makeZombie('walker', x, y));
+    return true;
+  }
+  return false;
+}
+function updateZombies(dt) {
+  zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN);
+  zSpawnT -= dt;
+  if (zSpawnT <= 0) {
+    zSpawnT = 7 + Math.random() * 9;
+    if (zombies.length < Z_CAP) {
+      const group = Math.random() < 0.25 ? 2 : 1;
+      for (let i = 0; i < group && zombies.length < Z_CAP; i++) trySpawnZombie(16, 28);
+    }
+  }
+  for (const z of zombies) updateZombie(z, dt);
+}
+
+// ---- Dying ---------------------------------------------------------------------------------------
+let deathCause = '';
+function startDying(cause) {
+  deathCause = cause || '';
+  state = 'dying'; hurtFx.deathT = 0;
+  player.moving = false;
+  store.del(slotKey(slot)); // permadeath: the save is gone as soon as you die
+  ui.hint.classList.add('hidden');
+}
+
 // ---- World rendering ---------------------------------------------------------------------------
 let frameTime = 0;
 function drawShadow(x, y, rx, ry) {
@@ -309,8 +459,13 @@ function renderWorld(camX, camY, withPlayer) {
       items.push(o);
     }
   }
-  let pl = null;
-  if (withPlayer) { pl = { k: -1, x: player.x, y: player.y }; items.push(pl); }
+  if (withPlayer) {
+    items.push({ k: -1, x: player.x, y: player.y });
+    for (const z of zombies) {
+      if (z.x < camX - 40 || z.x > camX + BW + 40 || z.y < camY - 8 || z.y > camY + BH + 64) continue;
+      items.push({ k: -2, x: z.x, y: z.y, z });
+    }
+  }
   items.sort((a, b) => a.y - b.y);
 
   bctx.fillStyle = 'rgba(16, 20, 8, 0.32)';
@@ -321,9 +476,17 @@ function renderWorld(camX, camY, withPlayer) {
 
   const pbx0 = withPlayer ? player.x - 11 : 0, pby0 = withPlayer ? player.y - 46 : 0;
   for (const o of items) {
-    if (o.k < 0) {
+    if (o.k === -1) {
       const [fx, fy] = playerFrame(player);
       bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
+      continue;
+    }
+    if (o.k === -2) {
+      const [fx, fy] = zombieFrame(o.z);
+      // Lunge forward slightly at the end of an attack.
+      let lx = 0, ly = 0;
+      if (o.z.mode === 'attack' && o.z.atk < 0.15) { const v = { N: [0, -3], S: [0, 3], E: [3, 0], W: [-3, 0] }[o.z.dir]; lx = v[0]; ly = v[1]; }
+      bctx.drawImage(IMG[ZOMBIE_TYPES[o.z.type].img], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
       continue;
     }
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
@@ -335,6 +498,60 @@ function renderWorld(camX, camY, withPlayer) {
     if (fade) bctx.globalAlpha = 1;
   }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+
+// ---- Health bar & hurt overlay ---------------------------------------------------------------
+const HEART = ['.##.##.', '#######', '#######', '.#####.', '..###..', '...#...'];
+function renderHealthBar() {
+  const x = 6, y = 7, hp = player.hp;
+  const low = hp / MAX_HP <= 0.25 && hp > 0;
+  const beat = low && Math.floor(frameTime / 280) % 2 === 0;
+  // Heart icon with a black outline.
+  bctx.fillStyle = '#000';
+  for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]])
+    HEART.forEach((row, r) => { for (let c = 0; c < 7; c++) if (row[c] === '#') bctx.fillRect(x + c + ox, y + r + oy, 1, 1); });
+  HEART.forEach((row, r) => { for (let c = 0; c < 7; c++) if (row[c] === '#') {
+    bctx.fillStyle = (r === 1 && (c === 1 || c === 2)) ? '#f4a090' : beat ? '#8e231c' : '#d33a2f';
+    bctx.fillRect(x + c, y + r, 1, 1);
+  } });
+  // Bar.
+  const bx = x + 11, by = y - 1, w = 64, h = 8;
+  bctx.fillStyle = '#000'; bctx.fillRect(bx - 1, by - 1, w + 2, h + 2);
+  bctx.fillStyle = '#2b0f0c'; bctx.fillRect(bx, by, w, h);
+  const lw = Math.round(w * hurtFx.lagHp / MAX_HP), fw = Math.round(w * hp / MAX_HP);
+  bctx.fillStyle = '#e9d9b2'; bctx.fillRect(bx, by, lw, h);
+  if (fw > 0) {
+    bctx.fillStyle = beat ? '#a32a21' : '#c8392d'; bctx.fillRect(bx, by, fw, h);
+    bctx.fillStyle = '#ea6a52'; bctx.fillRect(bx, by + 1, fw, 1);
+    bctx.fillStyle = '#8a2119'; bctx.fillRect(bx, by + h - 2, fw, 2);
+  }
+  if (hurtFx.flash > 0.55) { bctx.fillStyle = 'rgba(255,255,255,0.7)'; bctx.fillRect(bx, by, fw, h); }
+  bctx.fillStyle = 'rgba(0,0,0,0.45)';
+  for (let i = 1; i < 10; i++) bctx.fillRect(bx + Math.round(w * i / 10), by, 1, h);
+}
+let vignette = null;
+function makeVignette() {
+  vignette = document.createElement('canvas'); vignette.width = 320; vignette.height = 180;
+  const g = vignette.getContext('2d');
+  const gr = g.createRadialGradient(160, 90, 40, 160, 90, 200);
+  gr.addColorStop(0, 'rgba(150,0,0,0)'); gr.addColorStop(0.55, 'rgba(150,0,0,0.35)'); gr.addColorStop(1, 'rgba(110,0,0,0.95)');
+  g.fillStyle = gr; g.fillRect(0, 0, 320, 180);
+}
+function renderHurtOverlay() {
+  if (!player) return;
+  const missing = 1 - player.hp / MAX_HP;
+  let a = missing * 0.6 + hurtFx.flash * 0.35, tint = missing * 0.1 + hurtFx.flash * 0.1;
+  if (state === 'dying' || state === 'dead') { const t = Math.min(1, hurtFx.deathT / 1.6); a = Math.max(a, t); tint = Math.max(tint, t * 0.45); }
+  if (a < 0.01) return;
+  const w = canvas.width, h = canvas.height;
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = Math.min(1, a);
+  ctx.drawImage(vignette, 0, 0, w, h);
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = `rgba(120,0,0,${Math.min(0.6, tint)})`;
+  ctx.fillRect(0, 0, w, h);
 }
 
 // ---- Minimap --------------------------------------------------------------------------------------
@@ -488,7 +705,7 @@ function renderSlots() {
 function showMenu() {
   state = 'menu';
   if (!world || player) { world = new WorldGen((Math.random() * 2 ** 32) >>> 0); resetCaches(); }
-  player = null;
+  player = null; zombies = [];
   menuCam.x = 0; menuCam.y = 0;
   ui.menu.classList.remove('hidden'); ui.pause.classList.add('hidden'); ui.dead.classList.add('hidden');
   ui.maphelp.classList.add('hidden'); ui.hint.classList.add('hidden');
@@ -525,6 +742,7 @@ function startPlaying() {
   setTimeout(() => ui.hint.classList.add('fade'), 9000);
   state = 'play';
   lastAutosave = performance.now();
+  hurtFx.shake = 0; hurtFx.flash = 0; hurtFx.deathT = 0; hurtFx.lagHp = player.hp;
   revealAround(player.x, player.y);
 }
 function newGame(n) {
@@ -534,6 +752,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
+  zombies = []; zSpawnT = 12;
   startPlaying();
   saveGame();
 }
@@ -544,6 +763,9 @@ function loadGame(n) {
   player = newPlayer(s.player.x, s.player.y); player.dir = s.player.dir || 'S';
   explored = new Map(Object.entries(s.explored || {}).map(([k, v]) => [k, unpackBits(v)]));
   markers = s.markers || []; playTime = s.playTime || 0; created = s.created || Date.now();
+  player.hp = s.player.hp ?? MAX_HP;
+  zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; return o; });
+  zSpawnT = 8;
   startPlaying();
 }
 function saveGame() {
@@ -552,18 +774,18 @@ function saveGame() {
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
-    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir },
+    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, hp: player.hp },
+    zombies: zombies.map(z => ({ t: z.type, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     explored: ex, markers,
   }));
   lastAutosave = performance.now();
 }
-// Permadeath: the save is deleted and the player goes back to the menu.
-function killPlayer(cause) {
-  store.del(slotKey(slot));
+// Permadeath: the save was deleted when the player died (see startDying).
+function showGameOver() {
   slot = 0; state = 'dead';
-  $('dead-cause').textContent = cause || '';
+  $('dead-cause').textContent = deathCause;
   $('dead-time').textContent = 'You survived ' + fmtTime(playTime) + '.';
-  ui.dead.classList.remove('hidden'); ui.hint.classList.add('hidden');
+  ui.dead.classList.remove('hidden');
 }
 window.addEventListener('beforeunload', () => { if (state === 'play' || state === 'pause' || state === 'map') saveGame(); });
 
@@ -578,29 +800,44 @@ function loop(now) {
   if (state === 'menu') {
     menuCam.x += dt * 22; menuCam.y += dt * 9;
     renderWorld(Math.round(menuCam.x), Math.round(menuCam.y), false);
-  } else if (player && (state === 'play' || state === 'pause' || state === 'dead')) {
-    if (state === 'play') {
-      updatePlayer(dt);
+  } else if (player) {
+    if (state === 'play' || state === 'map') {
+      if (state === 'play') updatePlayer(dt);
       playTime += dt;
+      updateZombies(dt);
       revealT -= dt;
       if (revealT <= 0) { revealAround(player.x, player.y); revealT = 0.2; }
       if (now - lastAutosave > 120000) saveGame();
+    } else if (state === 'dying') {
+      for (const z of zombies) updateZombie(z, dt);
+      hurtFx.deathT += dt;
+      if (hurtFx.deathT > 1.6) showGameOver();
+    } else if (state === 'dead') {
+      hurtFx.deathT += dt;
     }
-    const camX = Math.round(player.x - BW / 2), camY = Math.round(player.y - 24 - BH / 2);
-    renderWorld(camX, camY, true);
-    unloadFarChunks(camX, camY);
-    renderMinimap();
-  } else if (state === 'map') {
-    playTime += dt;
-    renderFullMap();
+    updateHurtEffects(dt);
+    if (state === 'map') renderFullMap();
+    else {
+      const [sx, sy] = shakeOffset();
+      const camX = Math.round(player.x - BW / 2) + sx, camY = Math.round(player.y - 24 - BH / 2) + sy;
+      renderWorld(camX, camY, true);
+      unloadFarChunks(camX, camY);
+    }
   }
 
   ctx.drawImage(buf, 0, 0, BW * scale, BH * scale);
+  if (state !== 'menu' && state !== 'map') renderHurtOverlay();
+  // HUD goes on top of the red overlay so it stays readable.
+  if (player && (state === 'play' || state === 'pause')) {
+    bctx.clearRect(0, 0, BW, BH);
+    renderMinimap(); renderHealthBar();
+    ctx.drawImage(buf, 0, 0, BW * scale, BH * scale);
+  }
 
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0;
     if (!ui.debug.classList.contains('hidden') && player) {
-      ui.debug.textContent = `${fps} fps · tile ${Math.floor(player.x / TILE)}, ${Math.floor(player.y / TILE)} · chunks ${canvasCache.size} drawn / ${dataCache.size} data / ${explored.size} explored`;
+      ui.debug.textContent = `${fps} fps · tile ${Math.floor(player.x / TILE)}, ${Math.floor(player.y / TILE)} · zombies ${zombies.length} · hp ${Math.ceil(player.hp)} · chunks ${canvasCache.size} drawn / ${dataCache.size} data / ${explored.size} explored`;
     }
   }
   requestAnimationFrame(loop);
@@ -616,5 +853,6 @@ loadImages().then(() => {
 }).catch(err => { ui.loading.textContent = 'Could not load game art: ' + err; });
 
 // Hooks for automated testing.
-window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
+window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
+  spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

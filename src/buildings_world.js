@@ -54,7 +54,7 @@ const TEMPLATES = [
       '#.....d...#',
       '#.....#...#',
       '####D####W#'],
-    f: [['bed', 1, 1], ['dresser', 3, 1], ['shelf', 5, 1], ['fridge', 7, 1], ['stove', 9, 1], ['counter', 7, 3],
+    f: [['bed', 1, 1], ['dresser', 3, 1], ['shelf', 5, 1], ['fridge', 7, 1], ['counter', 8, 1], ['stove', 9, 2],
         ['table', 2, 4], ['chair', 1, 4], ['chair', 4, 4], ['shelf', 9, 6]],
     z: [[3, 3], [8, 2], [9, 6]] },
   { name: 'longhouse', grid: [

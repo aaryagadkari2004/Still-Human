@@ -941,7 +941,7 @@ function buildingColliders(b) {
     if (wallish(x + 1, y)) rects.push([cx, cy - T, cx + 16, cy + T]);
   }
   for (const f of L.furniture) {
-    const F = FURN[f.name], x0 = (b.x + f.x) * TILE, y0 = (b.y + f.y) * TILE;
+    const F = FURN[f.name], [odx, ody] = furnOffset(b, f), x0 = (b.x + f.x) * TILE + odx, y0 = (b.y + f.y) * TILE + ody;
     const inset = f.name === 'chair' ? 8 : 3;
     rects.push([x0 + inset, y0 + (F.h > 1 ? 4 : 12), x0 + F.w * TILE - inset, y0 + F.h * TILE - 2]);
   }
@@ -1225,9 +1225,22 @@ function drawWallTile(b, tx, ty, cut) {
 }
 const WALLTOP = { EW: [0, 0], E: [0, 96], W: [64, 96], NS: [32, 0], N: [96, 64], S: [32, 96], NE: [64, 0], ES: [96, 0], SW: [0, 32], NW: [32, 32],
   NES: [64, 32], ESW: [96, 32], NSW: [0, 64], NEW: [32, 64], NESW: [64, 64] };
+// Furniture next to a wall is pushed up against it (walls are thin and sit in the middle of their tile).
+function furnOffset(b, f) {
+  if (f._off) return f._off;
+  const L = layoutBuilding(b), F = FURN[f.name];
+  const wall = (x, y) => x >= 0 && y >= 0 && x < L.W && y < L.H && L.isWallish(L.cells[y][x]);
+  let dx = 0, dy = 0, n = true, w = true, e = true;
+  for (let x = f.x; x < f.x + F.w; x++) if (!wall(x, f.y - 1)) n = false;
+  for (let y = f.y; y < f.y + F.h; y++) { if (!wall(f.x - 1, y)) w = false; if (!wall(f.x + F.w, y)) e = false; }
+  if (n) dy = -12;
+  if (w && !e) dx = -10; else if (e && !w) dx = 10;
+  return (f._off = [dx, dy]);
+}
 function drawFurniture(b, f, searched) {
   const F = FURN[f.name], img = f.name === 'bed' ? bedSprite(hashInt(b.seed, f.i, 3) % bedColors.length) : IMG[F.img];
-  const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2), bottom = (b.y + f.y + F.h) * TILE;
+  const [odx, ody] = furnOffset(b, f);
+  const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2) + odx, bottom = (b.y + f.y + F.h) * TILE + ody;
   bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(x + 4, bottom - 6, img.width - 1, 6);
   if (searched) bctx.filter = 'brightness(0.8)';
   bctx.drawImage(img, x, bottom - img.height);
@@ -1251,7 +1264,7 @@ function collectBuildings(camX, camY, items) {
       const L = layoutBuilding(b), s = bstate.get(b.id);
       for (let ty = 0; ty < L.H; ty++) for (let tx = 0; tx < L.W; tx++)
         if (L.isWallish(L.cells[ty][tx])) items.push({ k: -3, x: 0, y: (b.y + ty) * TILE + 20, b, tx, ty });
-      for (const f of L.furniture) items.push({ k: -4, x: 0, y: (b.y + f.y + FURN[f.name].h) * TILE - 2, b, f, searched: !!(s && s.c[f.i]) });
+      for (const f of L.furniture) items.push({ k: -4, x: 0, y: (b.y + f.y + FURN[f.name].h) * TILE - 2 + furnOffset(b, f)[1], b, f, searched: !!(s && s.c[f.i]) });
     }
     items.push({ k: -5, x: 0, y: b._gfx.base, b });
   }
@@ -1313,7 +1326,8 @@ function findInteract() {
     });
     for (const f of L.furniture) {
       const F = FURN[f.name]; if (!F.container) continue;
-      const fx0 = (b.x + f.x) * TILE, fy0 = (b.y + f.y) * TILE, fx1 = fx0 + F.w * TILE, fy1 = fy0 + F.h * TILE;
+      const [odx, ody] = furnOffset(b, f);
+      const fx0 = (b.x + f.x) * TILE + odx, fy0 = (b.y + f.y) * TILE + ody, fx1 = fx0 + F.w * TILE, fy1 = fy0 + F.h * TILE;
       const dx = Math.max(fx0 - px, 0, px - fx1), dy = Math.max(fy0 - py, 0, py - fy1), d = Math.hypot(dx, dy) + 6;
       if (d < bd) { bd = d; best = { type: 'search', b, f, x: (fx0 + fx1) / 2, y: fy0 + 4 }; }
     }

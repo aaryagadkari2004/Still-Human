@@ -305,10 +305,11 @@ function shakeOffset() {
 }
 
 // ---- Zombies ------------------------------------------------------------------------------------
-// Each type: art, speeds (px/s), health, attack, senses. New types go here.
+// Each type: art (one or more looks, picked at random), speeds (px/s), health,
+// attack, senses. New types go here.
 const ZOMBIE_TYPES = {
   walker: {
-    img: 'zWalker', speed: 46, wanderSpeed: 18, hp: 100,
+    imgs: ['zWalker', 'zWalker2'], speed: 46, wanderSpeed: 18, hp: 100,
     damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
     sight: 8 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
   },
@@ -319,7 +320,7 @@ let zombies = [];
 let zSpawnT = 0;
 function makeZombie(type, x, y) {
   const T = ZOMBIE_TYPES[type];
-  return { type, x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
+  return { type, look: Math.floor(Math.random() * T.imgs.length), x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
     mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0 };
 }
 function faceToward(a, vx, vy) {
@@ -486,7 +487,7 @@ function renderWorld(camX, camY, withPlayer) {
       // Lunge forward slightly at the end of an attack.
       let lx = 0, ly = 0;
       if (o.z.mode === 'attack' && o.z.atk < 0.15) { const v = { N: [0, -3], S: [0, 3], E: [3, 0], W: [-3, 0] }[o.z.dir]; lx = v[0]; ly = v[1]; }
-      bctx.drawImage(IMG[ZOMBIE_TYPES[o.z.type].img], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
+      bctx.drawImage(IMG[ZOMBIE_TYPES[o.z.type].imgs[o.z.look] || ZOMBIE_TYPES[o.z.type].imgs[0]], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
       continue;
     }
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
@@ -519,7 +520,7 @@ function renderHealthBar() {
   const bx = x + 11, by = y - 1, w = 64, h = 8;
   bctx.fillStyle = '#000'; bctx.fillRect(bx - 1, by - 1, w + 2, h + 2);
   bctx.fillStyle = '#2b0f0c'; bctx.fillRect(bx, by, w, h);
-  const lw = Math.round(w * hurtFx.lagHp / MAX_HP), fw = Math.round(w * hp / MAX_HP);
+  const lw = Math.min(w, Math.round(w * hurtFx.lagHp / MAX_HP)), fw = Math.min(w, Math.round(w * hp / MAX_HP));
   bctx.fillStyle = '#e9d9b2'; bctx.fillRect(bx, by, lw, h);
   if (fw > 0) {
     bctx.fillStyle = beat ? '#a32a21' : '#c8392d'; bctx.fillRect(bx, by, fw, h);
@@ -764,7 +765,7 @@ function loadGame(n) {
   explored = new Map(Object.entries(s.explored || {}).map(([k, v]) => [k, unpackBits(v)]));
   markers = s.markers || []; playTime = s.playTime || 0; created = s.created || Date.now();
   player.hp = s.player.hp ?? MAX_HP;
-  zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; return o; });
+  zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; if (z.look != null) o.look = z.look; return o; });
   zSpawnT = 8;
   startPlaying();
 }
@@ -775,7 +776,7 @@ function saveGame() {
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, hp: player.hp },
-    zombies: zombies.map(z => ({ t: z.type, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    zombies: zombies.map(z => ({ t: z.type, look: z.look, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     explored: ex, markers,
   }));
   lastAutosave = performance.now();

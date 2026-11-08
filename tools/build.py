@@ -20,6 +20,7 @@ ASSETS = {
     "water": "water_v1.png",
     "objects": "objects_v1.png",
     "zWalker": "zombie_walker_v1.png",
+    "zWalker2": "zombie_walker2_v1.png",
 }
 
 def data_uri(path):

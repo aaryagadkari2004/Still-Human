@@ -39,9 +39,11 @@ function prepareAssets() {
 }
 const DETAIL_CELLS = [[128, 64], [192, 64], [0, 128], [64, 128], [128, 128], [192, 128]];
 
-// Player sheet: 64x64 frames, 4 per row. Rows: idle S, walk S, walk E, walk N, walk W.
+// Player sheet: 64x64 frames, 4 per row.
+// Rows: idle S, walk S, walk E, walk N, walk W, idle N, idle E, idle W.
 const PF = 64, P_AX = 32, P_AY = 58;
 const DIR_ROW = { S: 1, E: 2, N: 3, W: 4 };
+const IDLE_ROW = { S: 0, N: 5, E: 6, W: 7 };
 
 // ---- Storage (3 save slots) ---------------------------------------------------
 const memStore = {};
@@ -273,9 +275,7 @@ function updatePlayer(dt) {
 }
 function playerFrame(p) {
   const f = Math.floor(p.anim) % 4;
-  if (p.moving) return [f, DIR_ROW[p.dir]];
-  if (p.dir === 'S') return [f, 0];
-  return [0, DIR_ROW[p.dir]];
+  return [f, p.moving ? DIR_ROW[p.dir] : IDLE_ROW[p.dir]];
 }
 
 // ---- World rendering ---------------------------------------------------------------------------

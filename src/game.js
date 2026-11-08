@@ -369,12 +369,25 @@ function shakeOffset() {
 // onePiece looks (like a dress) get one colour for the whole outfit. New types go here.
 const ZOMBIE_TYPES = {
   walker: {
-    looks: [{ img: 'zWalker' }, { img: 'zWalker2' }, { img: 'zWalker3' }, { img: 'zWalker4', onePiece: true }],
+    looks: [{ img: 'zWalker' }, { img: 'zWalker2' }, { img: 'zWalker3' }, { img: 'zWalker4', onePiece: true }, { img: 'zWalker5' }],
     speed: 46, wanderSpeed: 18, hp: 100,
     damage: 12, reach: 27, windup: 0.45, cooldown: 1.4,
     sight: 10 * TILE, notice: 3 * TILE, forget: 5, animRate: 5,
   },
 };
+// Speed varies per zombie: most shamble at the normal pace, some are slower,
+// a few are faster — but never faster than the player walks.
+const Z_SPEEDS = [
+  { weight: 70, min: 0.95, max: 1.05 },   // normal
+  { weight: 18, min: 0.65, max: 0.85 },   // slow
+  { weight: 12, min: 1.2,  max: WALK / 46 }, // fast (up to walking pace)
+];
+function rollSpeed() {
+  let r = Math.random() * Z_SPEEDS.reduce((a, b) => a + b.weight, 0);
+  for (const b of Z_SPEEDS) { r -= b.weight; if (r <= 0) return b.min + Math.random() * (b.max - b.min); }
+  return 1;
+}
+function zSpeed(z, T) { return Math.min(WALK, T.speed * z.speedMul); }
 const Z_CAP = 36;             // most zombies around the player at once
 const Z_DESPAWN = 46 * TILE;  // zombies further than this are removed
 
@@ -445,7 +458,7 @@ function makeZombie(type, x, y) {
     top: Math.floor(Math.random() * TOP_COLORS.length), bottom: Math.floor(Math.random() * BOTTOM_COLORS.length),
     x, y, dir: 'NSEW'[Math.floor(Math.random() * 4)], moving: false, anim: Math.random() * 4,
     mode: 'idle', t: 1 + Math.random() * 3, gx: x, gy: y, atk: 0, cd: 0, hp: T.hp, lostT: 0, stuck: 0, detour: 0, dx: 0, dy: 0,
-    horde: 0, ox: 0, oy: 0 };
+    horde: 0, ox: 0, oy: 0, speedMul: rollSpeed() };
 }
 function faceToward(a, vx, vy) {
   if (Math.abs(vx) > Math.abs(vy)) a.dir = vx > 0 ? 'E' : 'W'; else a.dir = vy > 0 ? 'S' : 'N';
@@ -505,13 +518,13 @@ function updateZombie(z, dt) {
     if (z.mode !== 'chase') alertAround(z);
     z.mode = 'chase'; z.lostT = 0; z.gx = player.x; z.gy = player.y;
     if (d <= T.reach && z.cd <= 0) { z.mode = 'attack'; z.atk = T.windup; z.moving = false; }
-    else if (d > T.reach - 4) moveZombie(z, ddx, ddy, T.speed, dt);
+    else if (d > T.reach - 4) moveZombie(z, ddx, ddy, zSpeed(z, T), dt);
     else { z.moving = false; faceToward(z, ddx, ddy); }
   } else if (z.mode === 'chase') {
     // Lost sight (or was alerted): walk to where the player was last seen, then give up.
     z.lostT += dt;
     const gx = z.gx - z.x, gy = z.gy - z.y;
-    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget + 4) moveZombie(z, gx, gy, T.speed, dt);
+    if (Math.hypot(gx, gy) > 6 && z.lostT < T.forget + 4) moveZombie(z, gx, gy, zSpeed(z, T), dt);
     else {
       z.mode = 'idle'; z.t = 2 + Math.random() * 3; z.moving = false;
       const h = hordes.get(z.horde); if (h) { h.gx = z.x; h.gy = z.y; } // the horde regroups here
@@ -520,13 +533,13 @@ function updateZombie(z, dt) {
     // Horde members drift together toward the horde's goal, each keeping its own spot.
     const h = hordes.get(z.horde);
     const gx = h.gx + z.ox - z.x, gy = h.gy + z.oy - z.y, dist = Math.hypot(gx, gy);
-    if (dist > 10) { moveZombie(z, gx, gy, T.wanderSpeed * (dist > 3 * TILE ? 1.6 : 1), dt); z.mode = 'wander'; }
+    if (dist > 10) { moveZombie(z, gx, gy, T.wanderSpeed * (dist > 3 * TILE ? 1.6 : 1) * Math.min(1, z.speedMul), dt); z.mode = 'wander'; }
     else { z.moving = false; z.mode = 'idle'; }
   } else if (z.mode === 'wander') {
     const gx = z.gx - z.x, gy = z.gy - z.y;
     z.t -= dt;
     if (Math.hypot(gx, gy) < 4 || z.t <= 0) { z.mode = 'idle'; z.t = 2 + Math.random() * 4; z.moving = false; }
-    else moveZombie(z, gx, gy, T.wanderSpeed, dt);
+    else moveZombie(z, gx, gy, T.wanderSpeed * z.speedMul, dt);
   } else {
     z.moving = false; z.t -= dt;
     if (z.t <= 0) {
@@ -534,7 +547,7 @@ function updateZombie(z, dt) {
       z.mode = 'wander'; z.gx = gx; z.gy = gy; z.t = 12;
     }
   }
-  z.anim += dt * (z.moving ? T.animRate * (z.mode === 'chase' ? 1 : 0.6) : 2.5);
+  z.anim += dt * (z.moving ? T.animRate * z.speedMul * (z.mode === 'chase' ? 1 : 0.6) : 2.5);
 }
 function zombieFrame(z) {
   const f = Math.floor(z.anim) % 4;
@@ -1314,7 +1327,7 @@ function loadGame(n) {
   else player.hp = s.player.hp ?? MAX_HP;
   player.wounds = s.player.wounds || {};
   zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S';
-    for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy']) if (z[k] != null) o[k] = z[k];
+    for (const k of ['look', 'top', 'bottom', 'horde', 'ox', 'oy', 'speedMul']) if (z[k] != null) o[k] = z[k];
     return o; });
   hordes = new Map(); nextHordeId = 1;
   for (const z of zombies) if (z.horde) {
@@ -1333,7 +1346,7 @@ function saveGame() {
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
     player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts, wounds: player.wounds },
-    zombies: zombies.map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
+    zombies: zombies.map(z => ({ t: z.type, look: z.look, top: z.top, bottom: z.bottom, horde: z.horde, speedMul: Math.round(z.speedMul * 100) / 100, ox: Math.round(z.ox), oy: Math.round(z.oy), x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
     inv, explored: ex, markers,
   }));
   lastAutosave = performance.now();

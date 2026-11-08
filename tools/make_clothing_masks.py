@@ -12,7 +12,9 @@ How it decides, per frame:
   * everything else is clothing, split into top/bottom by height on the body.
 Check the result with --preview (writes /tmp/mask_preview_<sheet>.png).
 
-Usage: python3 tools/make_clothing_masks.py zombie_walker_v1.png [...] [--preview]"""
+Usage: python3 tools/make_clothing_masks.py zombie_walker_v1.png [...] [--preview] [--hooded]
+--hooded: the head is covered by clothing (a hood), so the head is recoloured too
+and there's no hair to protect."""
 import sys, colorsys, pathlib
 from collections import Counter, deque
 import numpy as np
@@ -43,7 +45,7 @@ def frames(a):
         for c in range(W // 64):
             yield r, c, a[r*64:(r+1)*64, c*64:(c+1)*64]
 
-def build(path):
+def build(path, hooded=False):
     a = np.array(Image.open(path).convert('RGBA'))
     px = a[a[..., 3] > 0][:, :3]
     counts = Counter(map(tuple, px.tolist())); total = len(px)
@@ -57,7 +59,7 @@ def build(path):
             if y - y0 < (y1 - y0) * 0.09:
                 col = tuple(int(v) for v in f[y, x, :3])
                 if col not in fixed: crown[col] += 1
-    hair_pal = {col for col, n in crown.items() if n >= 3}
+    hair_pal = set() if hooded else {col for col, n in crown.items() if n >= 3}
     mask = np.zeros(a.shape[:2], np.uint8)
     for r, c, f in frames(a):
         vis = f[..., 3] > 0
@@ -79,14 +81,14 @@ def build(path):
             cc = col(y, x)
             if cc in fixed or hair[y, x]: continue
             ry = (y - y0) / hgt
-            if ry < HEAD or ry > FEET: continue   # head and shoes keep their colours
+            if (ry < HEAD and not hooded) or ry > FEET: continue   # head and shoes keep their colours
             mask[r*64 + y, c*64 + x] = 2 if ry > WAIST else 1
     return a, mask
 
 def main():
     for name in [x for x in sys.argv[1:] if not x.startswith('--')]:
         p = ROOT / 'assets' / name
-        a, mask = build(p)
+        a, mask = build(p, '--hooded' in sys.argv)
         out = np.zeros(a.shape, np.uint8); out[..., 0] = mask; out[..., 3] = (mask > 0) * 255
         Image.fromarray(out).save(p.with_name(p.stem + '_mask.png'))
         if '--preview' in sys.argv:

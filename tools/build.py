@@ -23,10 +23,12 @@ ASSETS = {
     "zWalker2": "zombie_walker2_v1.png",
     "zWalker3": "zombie_walker3_v1.png",
     "zWalker4": "zombie_walker4_v1.png",
+    "zWalker5": "zombie_walker5_v1.png",
     "zWalkerMask": "zombie_walker_v1_mask.png",
     "zWalker2Mask": "zombie_walker2_v1_mask.png",
     "zWalker3Mask": "zombie_walker3_v1_mask.png",
     "zWalker4Mask": "zombie_walker4_v1_mask.png",
+    "zWalker5Mask": "zombie_walker5_v1_mask.png",
     "invPanel": "inventory_mock_v1.png",
     "bodyLabels": "body_labels.png",
 }

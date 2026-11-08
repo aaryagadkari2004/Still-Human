@@ -40,6 +40,8 @@ const ICONS = {
   // Headwear icons come from the front-facing frame of the worn sprite, at 2x.
   beanie: ['wearBeanie', 0, 0, 2, 64], bikehelmet: ['wearBike', 0, 0, 2, 64], hardhat: ['wearHardhat', 0, 0, 2, 64],
   motohelmet: ['wearMoto', 0, 0, 2, 64], militaryhelmet: ['wearMilitary', 0, 0, 2, 64],
+  // Backpack icons: the back-facing frame of the worn sprite.
+  bagS: ['wearBagS', 0, 5, 2, 64], bagM: ['wearBagM', 0, 5, 2, 64], bagL: ['wearBagL', 0, 5, 2, 64],
   hoodie: ['wearHoodie', 0, 0, 1, 64], leatherjacket: ['wearLeather', 0, 0, 1, 64], wintercoat: ['wearCoat', 0, 0, 1, 64], utilityvest: ['wearVest', 0, 0, 1, 64],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
@@ -1535,7 +1537,7 @@ function renderWorld(camX, camY, withPlayer) {
       const [fx, fy] = playerFrame(player);
       bctx.drawImage(IMG.player, fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
       // Worn gear is drawn on top, frame for frame.
-      for (const slot of ['clothes', 'helmet']) {
+      for (const slot of ['clothes', 'backpack', 'helmet']) {
         const it = inv.equip[slot], def = it && (ITEMS[it.key] || it);
         if (def && def.wear && IMG[def.wear]) bctx.drawImage(IMG[def.wear], fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY), PF, PF);
       }
@@ -2013,8 +2015,9 @@ function itemLabel(it) {
     if (pr.head) parts.push(`head +${Math.round(pr.head * 100)}%`);
     if (pr.rArm) parts.push(`arms +${Math.round(pr.rArm * 100)}%`);
     if (pr.torso) parts.push(`torso +${Math.round(pr.torso * 100)}%`);
-    return `${def.name} - ${parts.join(' ')}${def.pockets ? ` +${def.pockets} slots` : ''}`;
+    return `${def.name} - ${parts.join(' ')}`;
   }
+  if (def.cat === 'backpack') return `${def.name} - +${def.slots} slots`;
   if (def.weapon && WEAPONS[def.weapon]) return def.name;
   return def.name;
 }
@@ -2154,12 +2157,12 @@ const ITEMS = {
   hoodie:        { name: 'Hoodie', cat: 'clothes', abbr: 'HOD', wear: 'wearHoodie', protect: { torso: 0.1, rArm: 0.1, lArm: 0.1 } },
   leatherjacket: { name: 'Leather jacket', cat: 'clothes', abbr: 'LTH', wear: 'wearLeather', protect: { torso: 0.3, rArm: 0.35, lArm: 0.35 } },
   wintercoat:    { name: 'Winter coat', cat: 'clothes', abbr: 'CT', wear: 'wearCoat', protect: { torso: 0.2, rArm: 0.2, lArm: 0.2 } },
-  utilityvest:   { name: 'Utility vest', cat: 'clothes', abbr: 'VST', wear: 'wearVest', protect: { torso: 0.15 }, pockets: 2 },
+  utilityvest:   { name: 'Utility vest', cat: 'clothes', abbr: 'VST', wear: 'wearVest', protect: { torso: 0.2 } },
   jeans:    { name: 'Jeans', cat: 'pants', abbr: 'JNS' },
   boots:    { name: 'Work boots', cat: 'shoes', abbr: 'BTS' },
-  bagS:     { name: 'Small backpack', cat: 'backpack', abbr: 'BG3', slots: 3 },
-  bagM:     { name: 'Medium backpack', cat: 'backpack', abbr: 'BG6', slots: 6 },
-  bagL:     { name: 'Large backpack', cat: 'backpack', abbr: 'B12', slots: 12 },
+  bagS:     { name: 'Small backpack', cat: 'backpack', abbr: 'BG3', slots: 3, wear: 'wearBagS' },
+  bagM:     { name: 'Medium backpack', cat: 'backpack', abbr: 'BG6', slots: 6, wear: 'wearBagM' },
+  bagL:     { name: 'Large backpack', cat: 'backpack', abbr: 'B12', slots: 12, wear: 'wearBagL' },
 };
 function makeItem(key) { return { key, ...ITEMS[key] }; }
 // Each container rolls every line once: [item, chance]. Most finds are small.

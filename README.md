@@ -76,8 +76,8 @@ right-click to remove one, C to re-centre.
 - Headwear shows on your character in every animation and protects your head: beanie 5%, bike
   helmet 25%, hard hat 35%, military helmet 50%, motorcycle helmet 60% less damage to the head.
 - Tops show on your character too: hoodie (arms/torso +10%), winter coat (+20%), leather jacket
-  (arms +35%, torso +30%), utility vest (torso +15% and 2 extra storage slots). Gear that adds slots
-  can only come off once those slots are empty.
+  (arms +35%, torso +30%), utility vest (torso +20%). Backpacks show on your back too. A backpack
+  can only come off once its extra slots are empty.
 - Searching: hold E at a fridge, counter, dresser or shelves; contents open in a panel beside the
   inventory. Early items: bandages and first aid kits (stop bleeding), food and water (for later),
   kitchen knife and hatchet (weapons), clothes, and small/medium/large backpacks.

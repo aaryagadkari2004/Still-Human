@@ -225,7 +225,29 @@ function blocked(x0, y0, x1, y1) {
 // ---- Player ------------------------------------------------------------------------------------
 const WALK = 72, RUN = 138;     // pixels per second (a tile is ~1 metre)
 const FEET_W = 14, FEET_H = 6;
-function newPlayer(x, y) { return { x, y, dir: 'S', moving: false, running: false, anim: 0, hp: 100 }; }
+// Body parts. Each has its own health (0-100); if any reaches 0 the player dies.
+// The player's overall health (player.hp) is their most injured part.
+const BODY_PARTS = [
+  { id: 'head',   name: 'Head',       side: 0,  mult: 1.3 },
+  { id: 'torso',  name: 'Torso',      side: 0,  mult: 0.8 },
+  { id: 'rArm',   name: 'Right arm',  side: 1,  mult: 0.9 },
+  { id: 'lArm',   name: 'Left arm',   side: -1, mult: 0.9 },
+  { id: 'rHand',  name: 'Right hand', side: 1,  mult: 1.0 },
+  { id: 'lHand',  name: 'Left hand',  side: -1, mult: 1.0 },
+  { id: 'rLeg',   name: 'Right leg',  side: 1,  mult: 0.9 },
+  { id: 'lLeg',   name: 'Left leg',   side: -1, mult: 0.9 },
+  { id: 'rFoot',  name: 'Right foot', side: 1,  mult: 0.9 },
+  { id: 'lFoot',  name: 'Left foot',  side: -1, mult: 0.9 },
+];
+function newPlayer(x, y) {
+  const p = { x, y, dir: 'S', moving: false, running: false, anim: 0, parts: {}, lastHit: null, lastHitT: 0 };
+  for (const b of BODY_PARTS) p.parts[b.id] = 100;
+  Object.defineProperty(p, 'hp', {
+    get() { let m = 100; for (const k in this.parts) m = Math.min(m, this.parts[k]); return m; },
+    set(v) { for (const k in this.parts) this.parts[k] = Math.max(0, Math.min(100, v)); },
+  });
+  return p;
+}
 function feetBlocked(x, y) { return blocked(x - FEET_W / 2, y - FEET_H, x + FEET_W / 2, y); }
 
 function findSpawn(seedRand) {
@@ -282,12 +304,49 @@ function playerFrame(p) {
 // ---- Player health & hurt effects -----------------------------------------------------------
 const MAX_HP = 100;
 const hurtFx = { shake: 0, flash: 0, lagHp: MAX_HP, deathT: 0 };
-function hurtPlayer(amount, cause) {
+// Where a zombie's hit lands depends on where it is relative to the way the
+// player is facing: from the front it's mostly hands and arms (blocking, being
+// grabbed), from behind it's the back, neck and head, and the near side's
+// limbs are hit more than the far side's. Legs and feet are hit least.
+const HIT_WEIGHTS = {
+  //            front  behind
+  head:  [10, 22], torso: [18, 30],
+  arm:   [15, 12], hand:  [15, 4],
+  leg:   [4.5, 6], foot:  [1.5, 1.5],
+};
+const DIR_VEC = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
+function pickHitPart(ax, ay) {
+  const f = DIR_VEC[player.dir];
+  let vx = ax - player.x, vy = ay - player.y; const len = Math.hypot(vx, vy) || 1; vx /= len; vy /= len;
+  const front = (vx * f[0] + vy * f[1] + 1) / 2;          // 1 = in front, 0 = behind
+  const side = vx * -f[1] + vy * f[0];                    // +1 = on the player's right
+  const weights = BODY_PARTS.map(b => {
+    const key = b.id.replace(/^[rl]/, '').toLowerCase();
+    const w = HIT_WEIGHTS[key] || HIT_WEIGHTS[b.id];
+    const base = w[0] * front + w[1] * (1 - front);
+    return base * (b.side === 0 ? 1 : Math.max(0.25, 1 + b.side * side * 1.3));
+  });
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < weights.length; i++) { r -= weights[i]; if (r <= 0) return BODY_PARTS[i]; }
+  return BODY_PARTS[1];
+}
+const DEATH_BY_PART = {
+  head: 'A zombie tore into your head and neck.', torso: 'You were mauled — torso wounds.',
+  rArm: 'You bled out from your right arm.', lArm: 'You bled out from your left arm.',
+  rHand: 'Your right hand was torn apart.', lHand: 'Your left hand was torn apart.',
+  rLeg: 'You bled out from your right leg.', lLeg: 'You bled out from your left leg.',
+  rFoot: 'Your right foot was mangled.', lFoot: 'Your left foot was mangled.',
+};
+function hurtPlayer(amount, cause, fromX, fromY) {
   if (state !== 'play' && state !== 'map') return;
   if (state === 'map') closeMap();
-  player.hp = Math.max(0, player.hp - amount);
+  if (player.god) return;
+  const part = fromX != null ? pickHitPart(fromX, fromY) : BODY_PARTS[1];
+  const dmg = amount * part.mult * (0.8 + Math.random() * 0.4);
+  player.parts[part.id] = Math.max(0, player.parts[part.id] - dmg);
+  player.lastHit = part.id; player.lastHitT = performance.now();
   hurtFx.shake = 1; hurtFx.flash = 1;
-  if (player.hp <= 0) startDying(cause);
+  if (player.parts[part.id] <= 0) startDying(DEATH_BY_PART[part.id] || cause);
 }
 function updateHurtEffects(dt) {
   hurtFx.shake = Math.max(0, hurtFx.shake - dt * 3.2);
@@ -361,7 +420,7 @@ function updateZombie(z, dt) {
     z.moving = false; faceToward(z, ddx, ddy);
     z.atk -= dt;
     if (z.atk <= 0) {
-      if (alive && d <= T.reach + 8) hurtPlayer(T.damage, 'Killed by a zombie.');
+      if (alive && d <= T.reach + 8) hurtPlayer(T.damage, 'Killed by a zombie.', z.x, z.y);
       z.cd = T.cooldown; z.mode = 'chase';
     }
   } else if (sees) {
@@ -661,6 +720,267 @@ canvas.addEventListener('wheel', e => {
   mapView.x += before.x - after.x; mapView.y += before.y - after.y;
 }, { passive: false });
 
+// ---- Pixel font (3x5) for small UI text -------------------------------------------------------
+const FONT = (() => {
+  const g = {
+    A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110', E: '111100110100111',
+    F: '111100110100100', G: '011100101101011', H: '101101111101101', I: '111010010010111', J: '001001001101010',
+    K: '101101110101101', L: '100100100100111', M: '101111111101101', N: '110101101101101', O: '010101101101010',
+    P: '110101110100100', Q: '010101101111011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+    U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101', Y: '101101010010010',
+    Z: '111001010100111', '0': '111101101101111', '1': '010110010010111', '2': '110001010100111', '3': '110001010001110',
+    '4': '101101111001001', '5': '111100110001110', '6': '011100111101111', '7': '111001010010010', '8': '111101111101111',
+    '9': '111101111001110', '%': '101001010100101', '/': '001001010100100', '.': '000000000000010', '-': '000000111000000',
+    ' ': '000000000000000', '!': '010010010000010', "'": '010010000000000', '+': '000010111010000',
+  };
+  return g;
+})();
+function pixelText(g, text, x, y, color, s = 1) {
+  g.fillStyle = color;
+  let cx = x;
+  for (const ch of String(text).toUpperCase()) {
+    const glyph = FONT[ch] || FONT[' '];
+    for (let i = 0; i < 15; i++) if (glyph[i] === '1') g.fillRect(cx + (i % 3) * s, y + Math.floor(i / 3) * s, s, s);
+    cx += 4 * s;
+  }
+}
+const textWidth = (t, s = 1) => String(t).length * 4 * s - s;
+
+// ---- Inventory --------------------------------------------------------------------------------
+// The panel art is the mockup itself; the storage row is repeated for each extra row of slots
+// a backpack adds. Slot rectangles below are in the mockup's pixel coordinates.
+const INV_W = 320, INV_BASE_H = 320, INV_ROW_H = 39, INV_ROW_SRC = 267, INV_SPLIT = 306;
+const INV_COLS = 6, INV_BASE_SLOTS = 6;
+const STORAGE_X = [16, 65, 114, 163, 212, 261], STORAGE_Y = 274, SLOT_W = 43, SLOT_H = 32;
+const EQUIP_SLOTS = {
+  helmet:    { x: 151, y: 70,  w: 153, h: 25, accepts: 'helmet' },
+  clothes:   { x: 151, y: 100, w: 153, h: 25, accepts: 'clothes' },
+  pants:     { x: 151, y: 130, w: 153, h: 25, accepts: 'pants' },
+  shoes:     { x: 151, y: 160, w: 153, h: 25, accepts: 'shoes' },
+  primary:   { x: 16,  y: 211, w: 94,  h: 42, accepts: 'weapon', inner: [17, 230, 92, 22] },
+  secondary: { x: 113, y: 211, w: 94,  h: 42, accepts: 'weapon', inner: [114, 230, 92, 22] },
+  backpack:  { x: 210, y: 211, w: 94,  h: 42, accepts: 'backpack', inner: [211, 230, 92, 22] },
+};
+const BODY_BOX = { x: 20, y: 68, w: 117, h: 117 };
+const UI_BG = '#151d1e', UI_DARK = '#10181a', UI_TEXT = '#dde4d5', UI_DIM = '#82918a', UI_ACCENT = '#a8bf96', UI_GOLD = '#baab83';
+
+function newInventory() {
+  return { equip: { helmet: null, clothes: null, pants: null, shoes: null, primary: null, secondary: null, backpack: null },
+           storage: new Array(INV_BASE_SLOTS).fill(null) };
+}
+let inv = newInventory();
+let invOpen = false;
+const invCanvas = document.getElementById('inventory');
+const ictx = invCanvas.getContext('2d');
+let invScale = 2, invHover = null, invDrag = null, invMsg = null;
+
+function storageSize() { return INV_BASE_SLOTS + (inv.equip.backpack ? (inv.equip.backpack.slots || 0) : 0); }
+function invRows() { return Math.ceil(storageSize() / INV_COLS); }
+function invHeight() { return INV_BASE_H + (invRows() - 1) * INV_ROW_H; }
+function fitStorage() {
+  const n = storageSize();
+  while (inv.storage.length < n) inv.storage.push(null);
+}
+function slotRect(ref) {
+  if (ref.kind === 'equip') return EQUIP_SLOTS[ref.id];
+  const r = Math.floor(ref.i / INV_COLS), c = ref.i % INV_COLS;
+  return { x: STORAGE_X[c], y: STORAGE_Y + r * INV_ROW_H, w: SLOT_W, h: SLOT_H };
+}
+function getItem(ref) { return ref.kind === 'equip' ? inv.equip[ref.id] : inv.storage[ref.i]; }
+function setItem(ref, item) { if (ref.kind === 'equip') inv.equip[ref.id] = item; else inv.storage[ref.i] = item; }
+function accepts(ref, item) {
+  if (!item) return true;
+  if (ref.kind === 'storage') {
+    if (ref.i >= storageSize()) return false;
+    return true;
+  }
+  return EQUIP_SLOTS[ref.id].accepts === item.cat;
+}
+function slotAt(px, py) {
+  for (const id in EQUIP_SLOTS) { const r = EQUIP_SLOTS[id]; if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { kind: 'equip', id }; }
+  for (let i = 0; i < storageSize(); i++) { const r = slotRect({ kind: 'storage', i }); if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return { kind: 'storage', i }; }
+  return null;
+}
+function bodyPartAt(px, py) {
+  if (!IMG.bodyLabels || px < 0 || py < 0 || px >= INV_W || py >= INV_BASE_H) return null;
+  const id = bodyLabelData[py * INV_W + px];
+  return id ? BODY_PARTS[id - 1] : null;
+}
+// Moving an item: swap with whatever is in the target, if both fit.
+function moveItem(from, to) {
+  if (from.kind === to.kind && from.id === to.id && from.i === to.i) return;
+  const a = getItem(from), b = getItem(to);
+  if (!accepts(to, a) || !accepts(from, b)) { flashMsg("That doesn't go there"); return; }
+  // A backpack can only come off when the slots it adds are empty.
+  for (const [ref, item] of [[from, b], [to, a]]) {
+    if (ref.kind === 'equip' && ref.id === 'backpack') {
+      const cur = inv.equip.backpack, next = item;
+      const curN = INV_BASE_SLOTS + (cur ? cur.slots || 0 : 0), nextN = INV_BASE_SLOTS + (next ? next.slots || 0 : 0);
+      const target = to.kind === 'storage' ? to.i : from.kind === 'storage' ? from.i : -1;
+      for (let i = nextN; i < curN; i++) if (inv.storage[i] && i !== target) { flashMsg('Empty the backpack first'); return; }
+      if (target >= nextN) { flashMsg('Empty the backpack first'); return; }
+    }
+  }
+  setItem(from, b); setItem(to, a);
+  fitStorage();
+}
+function flashMsg(t) { invMsg = { t, until: performance.now() + 1600 }; }
+// Adds an item to the first free storage slot. Returns false if full.
+function giveItem(item) {
+  fitStorage();
+  for (let i = 0; i < storageSize(); i++) if (!inv.storage[i]) { inv.storage[i] = item; return true; }
+  return false;
+}
+
+let bodyLabelData = null, bodyBase = null;
+function prepareInventoryArt() {
+  const c = document.createElement('canvas'); c.width = INV_W; c.height = INV_BASE_H;
+  const g = c.getContext('2d'); g.drawImage(IMG.bodyLabels, 0, 0);
+  const d = g.getImageData(0, 0, INV_W, INV_BASE_H).data;
+  bodyLabelData = new Uint8Array(INV_W * INV_BASE_H);
+  for (let i = 0; i < bodyLabelData.length; i++) bodyLabelData[i] = d[i * 4 + 3] ? d[i * 4] : 0;
+  g.clearRect(0, 0, INV_W, INV_BASE_H); g.drawImage(IMG.invPanel, 0, 0);
+  bodyBase = g.getImageData(BODY_BOX.x, BODY_BOX.y, BODY_BOX.w, BODY_BOX.h);
+}
+// Colours each body part from its normal green toward red as it gets hurt.
+function drawBody(g, now) {
+  const im = new ImageData(new Uint8ClampedArray(bodyBase.data), BODY_BOX.w, BODY_BOX.h);
+  const d = im.data;
+  const blink = player.lastHit && now - player.lastHitT < 700 && Math.floor((now - player.lastHitT) / 100) % 2 === 0;
+  for (let y = 0; y < BODY_BOX.h; y++) for (let x = 0; x < BODY_BOX.w; x++) {
+    const id = bodyLabelData[(y + BODY_BOX.y) * INV_W + x + BODY_BOX.x]; if (!id) continue;
+    const part = BODY_PARTS[id - 1], t = 1 - player.parts[part.id] / 100;
+    const k = (y * BODY_BOX.w + x) * 4;
+    const isLine = d[k + 1] > 150;
+    let tr, tg, tb;
+    if (isLine) { tr = 236; tg = 98; tb = 78; } else if (d[k] > 40) { tr = 158; tg = 36; tb = 30; } else { tr = 118; tg = 24; tb = 22; }
+    d[k] = d[k] + (tr - d[k]) * t; d[k + 1] = d[k + 1] + (tg - d[k + 1]) * t; d[k + 2] = d[k + 2] + (tb - d[k + 2]) * t;
+    const hover = invHover && invHover.part === part;
+    if ((blink && part.id === player.lastHit) || hover) {
+      if (isLine) { d[k] = 255; d[k + 1] = 255; d[k + 2] = 230; }
+      else { d[k] = Math.min(255, d[k] + 30); d[k + 1] = Math.min(255, d[k + 1] + 30); d[k + 2] = Math.min(255, d[k + 2] + 30); }
+    }
+  }
+  g.putImageData(im, BODY_BOX.x, BODY_BOX.y);
+}
+const CAT_ABBR = { helmet: 'HLM', clothes: 'TOP', pants: 'PNT', shoes: 'SHO', weapon: 'WPN', backpack: 'BAG', misc: 'ITM' };
+function drawItemIcon(g, item, cx, cy, maxW, maxH) {
+  const img = item.icon && IMG[item.icon];
+  if (img) {
+    const s = Math.max(1, Math.floor(Math.min(maxW / img.width, maxH / img.height)));
+    g.drawImage(img, Math.round(cx - img.width * s / 2), Math.round(cy - img.height * s / 2), img.width * s, img.height * s);
+  } else {
+    // Placeholder until the item has art.
+    g.fillStyle = '#2c3a37'; g.fillRect(cx - 13, cy - 8, 26, 16);
+    g.fillStyle = UI_ACCENT; g.fillRect(cx - 13, cy - 8, 26, 1); g.fillRect(cx - 13, cy + 7, 26, 1);
+    const ab = CAT_ABBR[item.cat] || 'ITM';
+    pixelText(g, ab, cx - Math.floor(textWidth(ab) / 2), cy - 2, UI_TEXT);
+  }
+}
+function drawSlotItem(g, ref, item) {
+  const r = slotRect(ref);
+  if (ref.kind === 'equip' && EQUIP_SLOTS[ref.id].inner) {
+    const [x, y, w, h] = EQUIP_SLOTS[ref.id].inner;
+    g.fillStyle = UI_DARK; g.fillRect(x, y, w, h);
+    drawItemIcon(g, item, x + w / 2, y + h / 2, w - 4, h - 4);
+  } else if (ref.kind === 'equip') {
+    // Clothing row: icon box on the left, item name in place of the slot label.
+    g.fillStyle = '#202b2a'; g.fillRect(r.x + 1, r.y + 1, 34, r.h - 2);
+    drawItemIcon(g, item, r.x + 18, r.y + r.h / 2, 32, r.h - 4);
+    g.fillStyle = UI_DARK; g.fillRect(r.x + 37, r.y + 1, r.w - 39, r.h - 2);
+    pixelText(g, item.name.slice(0, 22), r.x + 43, r.y + 10, UI_TEXT);
+    g.fillStyle = UI_ACCENT; g.fillRect(r.x + r.w - 11, r.y + 11, 3, 3);
+  } else {
+    g.fillStyle = UI_DARK; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+    drawItemIcon(g, item, r.x + r.w / 2, r.y + r.h / 2, r.w - 6, r.h - 6);
+  }
+}
+function renderInventory(now) {
+  const H = invHeight(), rows = invRows();
+  if (invCanvas.width !== INV_W || invCanvas.height !== H) { invCanvas.width = INV_W; invCanvas.height = H; layoutInventory(); }
+  const g = ictx; g.imageSmoothingEnabled = false;
+  g.drawImage(IMG.invPanel, 0, 0, INV_W, INV_SPLIT, 0, 0, INV_W, INV_SPLIT);
+  for (let r = 1; r < rows; r++) g.drawImage(IMG.invPanel, 0, INV_ROW_SRC, INV_W, INV_ROW_H, 0, INV_SPLIT + (r - 1) * INV_ROW_H, INV_W, INV_ROW_H);
+  g.drawImage(IMG.invPanel, 0, INV_SPLIT, INV_W, INV_BASE_H - INV_SPLIT, 0, INV_SPLIT + (rows - 1) * INV_ROW_H, INV_W, INV_BASE_H - INV_SPLIT);
+  // Slots past the storage size in the last row are hidden.
+  for (let i = storageSize(); i < rows * INV_COLS; i++) { const r = slotRect({ kind: 'storage', i }); g.fillStyle = UI_BG; g.fillRect(r.x, r.y, r.w, r.h); }
+
+  drawBody(g, now);
+
+  // Storage counter (replaces the "0 / 6" in the art).
+  const used = inv.storage.slice(0, storageSize()).filter(Boolean).length;
+  g.fillStyle = UI_BG; g.fillRect(266, 260, 40, 9);
+  const ct = `${used} / ${storageSize()}`;
+  pixelText(g, ct, 304 - textWidth(ct), 262, '#82918a');
+
+  for (const id in EQUIP_SLOTS) { const it = inv.equip[id]; if (it && !(invDrag && invDrag.from.kind === 'equip' && invDrag.from.id === id)) drawSlotItem(g, { kind: 'equip', id }, it); }
+  for (let i = 0; i < storageSize(); i++) { const it = inv.storage[i]; if (it && !(invDrag && invDrag.from.kind === 'storage' && invDrag.from.i === i)) drawSlotItem(g, { kind: 'storage', i }, it); }
+
+  // Hover highlight for slots (green if the dragged item fits, red if not).
+  if (invHover && invHover.slot) {
+    const r = slotRect(invHover.slot);
+    const ok = !invDrag || (accepts(invHover.slot, invDrag.item) && accepts(invDrag.from, getItem(invHover.slot)));
+    g.strokeStyle = invDrag ? (ok ? '#a8d68f' : '#d0574a') : '#6f8378'; g.lineWidth = 1;
+    g.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+  }
+  // Body part readout at the bottom of the body panel.
+  const part = invHover && invHover.part;
+  const show = part || (player.lastHit && now - player.lastHitT < 2500 ? BODY_PARTS.find(b => b.id === player.lastHit) : null);
+  g.fillStyle = UI_DARK; g.fillRect(BODY_BOX.x + 10, 177, 97, 7);
+  if (show) {
+    const v = Math.ceil(player.parts[show.id]);
+    const t = `${show.name} ${v}%`;
+    pixelText(g, t, BODY_BOX.x + 58 - Math.floor(textWidth(t) / 2), 178, v > 60 ? UI_ACCENT : v > 30 ? '#e0b45a' : '#e8644f');
+  }
+  // Hovered item name, or a message.
+  let tip = invMsg && now < invMsg.until ? invMsg.t : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? getItem(invHover.slot).name : null);
+  if (tip) {
+    const w = textWidth(tip) + 8;
+    g.fillStyle = '#0c1213'; g.fillRect(Math.round(INV_W / 2 - w / 2), H - 12, w, 9);
+    pixelText(g, tip, Math.round(INV_W / 2 - w / 2) + 4, H - 10, invMsg && now < invMsg.until ? '#e0b45a' : UI_TEXT);
+  }
+  // The item being dragged follows the cursor.
+  if (invDrag && invDrag.px != null) drawItemIcon(g, invDrag.item, invDrag.px, invDrag.py, 40, 28);
+}
+function layoutInventory() {
+  const H = invHeight();
+  invScale = Math.max(1, Math.floor(Math.min(window.innerWidth * 0.94 / INV_W, window.innerHeight * 0.94 / H)));
+  invCanvas.style.width = INV_W * invScale + 'px';
+  invCanvas.style.height = H * invScale + 'px';
+}
+window.addEventListener('resize', layoutInventory);
+function invPoint(e) {
+  const r = invCanvas.getBoundingClientRect();
+  return [Math.floor((e.clientX - r.left) / invScale), Math.floor((e.clientY - r.top) / invScale)];
+}
+invCanvas.addEventListener('mousemove', e => {
+  const [x, y] = invPoint(e);
+  invHover = { slot: slotAt(x, y), part: bodyPartAt(x, y) };
+  if (invDrag) { invDrag.px = x; invDrag.py = y; }
+});
+invCanvas.addEventListener('mouseleave', () => { invHover = null; });
+invCanvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const [x, y] = invPoint(e), ref = slotAt(x, y);
+  if (ref && getItem(ref)) invDrag = { from: ref, item: getItem(ref), px: x, py: y };
+});
+window.addEventListener('mouseup', e => {
+  if (!invDrag) return;
+  const [x, y] = invPoint(e), to = slotAt(x, y);
+  if (to) moveItem(invDrag.from, to);
+  invDrag = null;
+});
+invCanvas.addEventListener('contextmenu', e => e.preventDefault());
+function openInventory() {
+  invOpen = true; invHover = null; invDrag = null;
+  fitStorage(); layoutInventory();
+  invCanvas.classList.remove('hidden'); canvas.classList.add('blurred');
+}
+function closeInventory() {
+  invOpen = false; invDrag = null;
+  invCanvas.classList.add('hidden'); canvas.classList.remove('blurred');
+}
+
 // ---- UI (menus) ---------------------------------------------------------------------------------
 const $ = id => document.getElementById(id);
 const ui = {
@@ -723,8 +1043,12 @@ $('btn-dead-menu').onclick = () => showMenu();
 
 function resume() { state = 'play'; ui.pause.classList.add('hidden'); }
 function onKeyPress(k) {
-  if (state === 'play') {
+  if (state === 'play' && invOpen) {
+    if (k === 'i' || k === 'escape' || k === 'tab') closeInventory();
+    else if (k === 'm') { closeInventory(); openMap(); }
+  } else if (state === 'play') {
     if (k === 'escape') { state = 'pause'; ui.pause.classList.remove('hidden'); keys.clear(); }
+    else if (k === 'i' || k === 'tab') openInventory();
     else if (k === 'm') openMap();
     else if (k === 'f3') ui.debug.classList.toggle('hidden');
   } else if (state === 'pause') {
@@ -753,7 +1077,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
-  zombies = []; zSpawnT = 12;
+  zombies = []; zSpawnT = 12; inv = newInventory();
   startPlaying();
   saveGame();
 }
@@ -764,9 +1088,12 @@ function loadGame(n) {
   player = newPlayer(s.player.x, s.player.y); player.dir = s.player.dir || 'S';
   explored = new Map(Object.entries(s.explored || {}).map(([k, v]) => [k, unpackBits(v)]));
   markers = s.markers || []; playTime = s.playTime || 0; created = s.created || Date.now();
-  player.hp = s.player.hp ?? MAX_HP;
+  if (s.player.parts) for (const b of BODY_PARTS) player.parts[b.id] = s.player.parts[b.id] ?? 100;
+  else player.hp = s.player.hp ?? MAX_HP;
   zombies = (s.zombies || []).filter(z => ZOMBIE_TYPES[z.t]).map(z => { const o = makeZombie(z.t, z.x, z.y); o.hp = z.hp; o.dir = z.dir || 'S'; if (z.look != null) o.look = z.look; return o; });
   zSpawnT = 8;
+  inv = newInventory();
+  if (s.inv) { Object.assign(inv.equip, s.inv.equip || {}); inv.storage = s.inv.storage || inv.storage; fitStorage(); }
   startPlaying();
 }
 function saveGame() {
@@ -775,9 +1102,9 @@ function saveGame() {
   for (const [k, v] of explored) ex[k] = packBits(v);
   store.set(slotKey(slot), JSON.stringify({
     v: 1, seed: world.seed, created, updated: Date.now(), playTime: Math.floor(playTime),
-    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, hp: player.hp },
+    player: { x: Math.round(player.x), y: Math.round(player.y), dir: player.dir, parts: player.parts },
     zombies: zombies.map(z => ({ t: z.type, look: z.look, x: Math.round(z.x), y: Math.round(z.y), hp: z.hp, dir: z.dir })),
-    explored: ex, markers,
+    inv, explored: ex, markers,
   }));
   lastAutosave = performance.now();
 }
@@ -835,6 +1162,10 @@ function loop(now) {
     ctx.drawImage(buf, 0, 0, BW * scale, BH * scale);
   }
 
+  if (invOpen) {
+    if (state === 'play') renderInventory(now); else closeInventory();
+  }
+
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0;
     if (!ui.debug.classList.contains('hidden') && player) {
@@ -848,6 +1179,7 @@ function loop(now) {
 resize();
 loadImages().then(() => {
   prepareAssets();
+  prepareInventoryArt();
   ui.loading.classList.add('hidden');
   showMenu();
   requestAnimationFrame(loop);
@@ -855,5 +1187,6 @@ loadImages().then(() => {
 
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
+  giveItem, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
   spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

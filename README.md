@@ -11,6 +11,7 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | --- | --- |
 | WASD / arrows | Move |
 | Shift | Run |
+| I / Tab | Open / close the inventory (the game keeps running) |
 | M | Open / close the map |
 | Esc | Pause (save, quit to menu) |
 | F3 | Debug info |
@@ -29,6 +30,12 @@ right-click to remove one, C to re-centre.
 - Minimap and full map that only show explored areas, plus map markers.
 - Walker zombies: wander, notice you within about 8 tiles, chase more slowly than you walk,
   lose interest when they lose sight of you, and lunge to attack. Up to 9 roam around you at once.
+- Body-part health: head, torso, each arm, hand, leg and foot. Where a zombie hits you depends on
+  where it is relative to the way you're facing. If any part reaches 0%, you die. The top-left bar
+  shows your most injured part.
+- Inventory: body health figure (parts turn red as they're hurt, hover for %), clothing slots
+  (helmet, clothes, pants, shoes), primary and secondary weapon, backpack, and 6 storage slots.
+  Backpacks add rows of storage. Drag items between slots; slots only accept the right kind of item.
 - Pixel health bar. Damage tints the screen redder the more you're hurt, and hits shake the camera.
 - 3 save slots, autosave every 2 minutes, permadeath (the save is deleted on death) and a game over screen.
 
@@ -37,9 +44,10 @@ right-click to remove one, C to re-centre.
 ```
 assets/                  art (PNG sprite sheets and tiles)
 src/world.js             world generation (noise, terrain, autotiling, objects)
-src/game.js              rendering, player, map, menus, saves
+src/game.js              rendering, player, zombies, inventory, map, menus, saves
 src/index.template.html  page layout and styles
 tools/build.py           bundles everything into index.html
+tools/make_body_labels.py  finds the body parts in the inventory art (re-run if the figure changes)
 index.html               the built game
 ```
 

@@ -10,6 +10,9 @@
   body { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: #d9d4b4; user-select: none; }
   #game { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; }
   .hidden { display: none !important; }
+  #game { transition: filter 0.2s; }
+  #game.blurred { filter: blur(3px) brightness(0.75); }
+  #inventory { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); image-rendering: pixelated; box-shadow: 0 0 0 1px #000, 8px 8px 0 rgba(0,0,0,0.6); cursor: default; }
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
   #menu { background: radial-gradient(ellipse at center, rgba(8,9,5,0.35) 0%, rgba(8,9,5,0.85) 75%); }
   h1 { margin: 0; font-size: clamp(40px, 7vw, 84px); letter-spacing: 0.18em; color: #e6e0bd; text-shadow: 4px 4px 0 #000, 0 0 24px rgba(0,0,0,0.6); font-weight: 800; }
@@ -51,6 +54,8 @@
 <body>
 <canvas id="game"></canvas>
 
+<canvas id="inventory" class="hidden"></canvas>
+
 <div id="loading">LOADING…</div>
 
 <div id="menu" class="screen hidden">
@@ -79,7 +84,7 @@
   </div>
 </div>
 
-<div id="hint" class="hidden"><b>WASD</b> move · <b>Shift</b> run · <b>M</b> map · <b>Esc</b> pause</div>
+<div id="hint" class="hidden"><b>WASD</b> move · <b>Shift</b> run · <b>M</b> map · <b>I</b> inventory · <b>Esc</b> pause</div>
 
 <div id="maphelp" class="hidden">
   <span><b>Drag</b> pan</span><span><b>Wheel</b> zoom</span>

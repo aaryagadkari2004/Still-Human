@@ -15,7 +15,7 @@ Open `index.html` in a browser. It's fully self-contained, with all the art buil
 | Space | Jump (clear rocks, stumps and logs; a mid-air jump dodges a zombie's lunge) |
 | Left click | Attack toward the mouse (hold to keep swinging) |
 | X | Swap primary and secondary weapon |
-| E | Open/close doors; hold to search furniture |
+| Click a door / furniture | Open or close it / search it (white dots mark what's in reach) |
 | Right click (inventory) | Use an item (e.g. bandage) |
 | I / Tab | Open / close the inventory (the game keeps running) |
 | M | Open / close the map |

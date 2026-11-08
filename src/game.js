@@ -944,7 +944,13 @@ function hitZombie(z, W, ang) {
     for (let i = 0; i < 9; i++) blood.push({ x: z.x + (Math.random() * 22 - 11), y: z.y - 2 + Math.random() * 6, t: performance.now(), s: 3 });
   }
 }
-canvas.addEventListener('mousedown', e => { if (e.button === 0 && state === 'play' && !invOpen) { mouse.down = true; mouse.x = e.clientX; mouse.y = e.clientY; if (player) startAttack(); } });
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0 || state !== 'play' || invOpen) return;
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  // Clicking something usable uses it; clicking anywhere else attacks.
+  if (player && hoverIt) { useInteractable(hoverIt); return; }
+  mouse.down = true; if (player) startAttack();
+});
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 
@@ -1436,66 +1442,103 @@ function renderInsideDarkness(camX, camY) {
   bctx.drawImage(darkC, 0, 0);
 }
 
-// ---- Interacting: doors (E) and searching (hold E) ----
-let interact = null, searchT = 0;
-const SEARCH_TIME = 0.9;
-function findInteract() {
-  const px = player.x, py = player.y - 8;
-  let best = null, bd = 30;
-  for (const b of buildingsIn(px - 64, py - 64, px + 64, py + 64)) {
-    const L = layoutBuilding(b);
+// ---- Interacting: click doors and furniture ----
+// Things you can use within reach get a small white dot; hovering one shows the hand cursor,
+// clicking it opens/closes a door or searches furniture (searching takes a moment).
+const REACH = 44, SEARCH_TIME = 0.9;
+let nearby = [], hoverIt = null, searching = null;
+function furnRect(b, f) {
+  const F = FURN[f.name], img = f.name === 'bed' ? IMG.fBed : IMG[F.img], [odx, ody] = furnOffset(b, f);
+  const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2) + odx, bottom = (b.y + f.y + F.h) * TILE + ody;
+  return [x, bottom - img.height, x + img.width, bottom];
+}
+function findNearby() {
+  const out = [], px = player.x, py = player.y - 10;
+  if (player.swimming || player.jump) return out;
+  const pb = insideB;
+  for (const b of buildingsIn(px - 96, py - 96, px + 96, py + 96)) {
+    const L = layoutBuilding(b), inside = b === pb;
     L.openings.forEach((o, i) => {
-      if (o.kind !== 'door') return;
-      const [cx, cy] = openingCenter(b, o), d = Math.hypot(cx - px, cy - py);
-      if (d < bd && openingState(b, i) !== 'broken') { bd = d; best = { type: 'door', b, i, x: cx, y: cy }; }
+      if (o.kind !== 'door' || openingState(b, i) === 'broken') return;
+      // From outside you can only reach the front doors you can see; inside, any door.
+      if (!inside && !(o.outer && o.south)) return;
+      const tx = (b.x + o.x) * TILE, ty = (b.y + o.y) * TILE;
+      const vert = !o.horiz, h = o.south && inside ? WALL_CUT : WALL_H;
+      const rect = vert ? [tx + 8, ty - h, tx + 24, ty + 32] : [tx + 4, ty + 20 - h, tx + 28, ty + 28];
+      const dot = vert ? [tx + 16, ty - h + 16] : [tx + 16, ty + 20 - Math.round(h / 2)];
+      out.push({ type: 'door', b, i, rect, dot });
     });
+    if (!inside) continue;
     for (const f of L.furniture) {
-      const F = FURN[f.name]; if (!F.container) continue;
-      const [odx, ody] = furnOffset(b, f);
-      const fx0 = (b.x + f.x) * TILE + odx, fy0 = (b.y + f.y) * TILE + ody, fx1 = fx0 + F.w * TILE, fy1 = fy0 + F.h * TILE;
-      const dx = Math.max(fx0 - px, 0, px - fx1), dy = Math.max(fy0 - py, 0, py - fy1), d = Math.hypot(dx, dy) + 6;
-      if (d < bd) { bd = d; best = { type: 'search', b, f, x: (fx0 + fx1) / 2, y: fy0 + 4 }; }
+      if (!FURN[f.name].container) continue;
+      const rect = furnRect(b, f);
+      out.push({ type: 'search', b, f, rect, dot: [Math.round((rect[0] + rect[2]) / 2), Math.round((rect[1] + rect[3]) / 2)] });
     }
   }
-  return best;
+  return out.filter(it => {
+    const [x0, y0, x1, y1] = it.rect, f = it.type === 'door' ? 0 : 0;
+    const fx = it.type === 'search' ? Math.max(x0 - px, 0, px - x1) : Math.max(x0 - px, 0, px - x1);
+    const fy = it.type === 'door' ? Math.max(y1 - 30 - py, 0, py - y1 - 4) : Math.max(y0 - py, 0, py - y1);
+    return Math.hypot(fx, fy) < REACH + f;
+  });
 }
 function updateInteract(dt) {
-  interact = player.swimming || player.jump ? null : findInteract();
-  if (interact && interact.type === 'search' && keys.has('e')) {
-    const s = bState(interact.b);
-    if (s.c[interact.f.i]) { if (searchT >= 0) { openContainer(interact); makeNoise(interact.x, interact.y + 12, NOISE.search * 0.6, true); } searchT = -1; return; }
-    if (searchT < 0) return;
-    if (searchT === 0) makeNoise(interact.x, interact.y + 12, NOISE.search, true);
-    searchT += dt;
-    if (searchT >= SEARCH_TIME) { s.c[interact.f.i] = rollLoot(interact.b, interact.f); openContainer(interact); searchT = -1; }
-  } else if (!keys.has('e')) searchT = 0;
-}
-function pressInteract() {
-  if (!interact || interact.type !== 'door') return;
-  const st = openingState(interact.b, interact.i);
-  makeNoise(interact.x, interact.y + 4, NOISE.door, true);
-  if (st === 'closed') setOpening(interact.b, interact.i, 'open');
-  else if (st === 'open') {
-    // Can't shut a door on someone standing in it.
-    const [cx, cy] = openingCenter(interact.b, layoutBuilding(interact.b).openings[interact.i]);
-    const inWay = [player, ...zombies.filter(z => !z.dead)].some(a => Math.abs(a.x - cx) < 18 && Math.abs(a.y - 4 - cy) < 18);
-    if (inWay) { toast('Something is in the way'); return; }
-    setOpening(interact.b, interact.i, 'closed');
+  nearby = findNearby();
+  if (state === 'play' && !invOpen) {
+    const [mx, my] = mouseWorld();
+    hoverIt = nearby.find(it => mx >= it.rect[0] - 3 && mx <= it.rect[2] + 3 && my >= it.rect[1] - 3 && my <= it.rect[3] + 3) || null;
+  } else hoverIt = null;
+  canvas.style.cursor = hoverIt ? HAND_CURSOR : 'crosshair';
+  if (searching) {
+    // Keep searching while you stay close; walking off cancels it.
+    if (!nearby.some(it => it.type === 'search' && it.b.id === searching.it.b.id && it.f.i === searching.it.f.i)) { searching = null; return; }
+    searching.t += dt;
+    if (searching.t >= SEARCH_TIME) {
+      const it = searching.it, s = bState(it.b);
+      s.c[it.f.i] = rollLoot(it.b, it.f); searching = null;
+      openContainer(it);
+    }
   }
 }
-function renderInteractPrompt(camX, camY) {
-  if (!interact || invOpen) return;
-  let label;
-  if (interact.type === 'door') label = openingState(interact.b, interact.i) === 'closed' ? 'E OPEN' : 'E CLOSE';
-  else label = bState(interact.b).c[interact.f.i] ? 'E OPEN' : 'HOLD E SEARCH';
-  const x = Math.round(interact.x - textWidth(label) / 2), y = Math.round(interact.y - (interact.type === 'door' ? 56 : 30));
-  bctx.fillStyle = 'rgba(10,12,8,0.8)'; bctx.fillRect(x - 3, y - 2, textWidth(label) + 6, 9);
-  pixelText(bctx, label, x, y, '#e8dfb8');
-  if (interact.type === 'search' && searchT > 0) {
-    const w = textWidth(label) + 6;
-    bctx.fillStyle = '#000'; bctx.fillRect(x - 3, y + 8, w, 3);
-    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x - 3, y + 8, Math.round(w * Math.min(1, searchT / SEARCH_TIME)), 3);
+function useInteractable(it) {
+  if (it.type === 'door') {
+    const st = openingState(it.b, it.i);
+    const [cx, cy] = openingCenter(it.b, layoutBuilding(it.b).openings[it.i]);
+    if (st === 'open') {
+      // Can't shut a door on someone standing in it.
+      const inWay = [player, ...zombies.filter(z => !z.dead)].some(a => Math.abs(a.x - cx) < 18 && Math.abs(a.y - 4 - cy) < 18);
+      if (inWay) { toast('Something is in the way'); return; }
+    }
+    makeNoise(cx, cy + 4, NOISE.door, true);
+    setOpening(it.b, it.i, st === 'closed' ? 'open' : 'closed');
+    return;
   }
+  const s = bState(it.b), [x0, y0, x1, y1] = it.rect, cx = (x0 + x1) / 2, cy = y1;
+  if (s.c[it.f.i]) { openContainer(it); makeNoise(cx, cy, NOISE.search * 0.6, true); return; }
+  if (searching) return;
+  searching = { it, t: 0 };
+  makeNoise(cx, cy, NOISE.search, true);
+}
+function renderInteractDots() {
+  if (invOpen) return;
+  for (const it of nearby) {
+    const [x, y] = it.dot, big = it === hoverIt;
+    const r = big ? 2 : 1;
+    bctx.fillStyle = 'rgba(0,0,0,0.75)'; bctx.fillRect(x - r - 1, y - r - 1, r * 2 + 3, r * 2 + 3);
+    bctx.fillStyle = '#ffffff'; bctx.fillRect(x - r, y - r, r * 2 + 1, r * 2 + 1);
+  }
+  if (searching) {
+    const [x0, y0, x1] = searching.it.rect, w = 22, x = Math.round((x0 + x1) / 2 - w / 2), y = Math.round(y0 - 7);
+    bctx.fillStyle = '#000'; bctx.fillRect(x - 1, y - 1, w + 2, 5);
+    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x, y, Math.round(w * Math.min(1, searching.t / SEARCH_TIME)), 3);
+  }
+}
+let HAND_CURSOR = 'pointer';
+function prepareCursor() {
+  const img = IMG.cursorHand; if (!img) return;
+  const c = document.createElement('canvas'); c.width = img.width * 2; c.height = img.height * 2;
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(img, 0, 0, c.width, c.height);
+  HAND_CURSOR = `url(${c.toDataURL()}) 14 0, pointer`;   // hotspot at the fingertip
 }
 
 // ---- Noise ------------------------------------------------------------------------------------
@@ -1665,7 +1708,7 @@ function renderWorld(camX, camY, withPlayer) {
     bctx.drawImage(IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (fade) bctx.globalAlpha = 1;
   }
-  if (withPlayer) { renderSwing(); renderInteractPrompt(camX, camY); }
+  if (withPlayer) { renderSwing(); renderInteractDots(); }
   bctx.setTransform(1, 0, 0, 1, 0, 0);
   if (withPlayer) renderInsideDarkness(camX, camY);
 }
@@ -2400,7 +2443,6 @@ $('btn-dead-menu').onclick = () => showMenu();
 function e_pressedRecently() { return false; }
 function resume() { state = 'play'; ui.pause.classList.add('hidden'); }
 function onKeyPress(k) {
-  if (state === 'play' && k === 'e') { if (!e_pressedRecently()) pressInteract(); }
   if (state === 'play' && k === 'c') toggleCrouch();
   if (state === 'play' && k === ' ' && !invOpen) startJump();
   if (state === 'play' && invOpen) {
@@ -2439,7 +2481,7 @@ function newGame(n) {
   explored = new Map(); markers = []; playTime = 0; created = Date.now();
   const sp = findSpawn(Math.random);
   player = newPlayer(sp.x, sp.y);
-  zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null;
+  zombies = []; hordes = new Map(); zSpawnT = 8; inv = newInventory(); bstate.clear(); container = null; searching = null;
   startPlaying();
   saveGame();
 }
@@ -2559,6 +2601,7 @@ loadImages().then(() => {
   prepareAssets();
   prepareInventoryArt();
   prepareZombieMasks();
+  prepareCursor();
   ui.loading.classList.add('hidden');
   showMenu();
   requestAnimationFrame(loop);
@@ -2567,6 +2610,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, makeNoise, NOISE, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

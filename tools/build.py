@@ -44,6 +44,7 @@ ASSETS = {
     "itemsFood": "items_food_v1.png",
     "itemsMelee": "items_melee_v1.png",
     "itemsMed": "items_medical_v1.png",
+    "cursorHand": "cursor_hand_v1.png",
     "wearBeanie": "wear_beanie_v1.png",
     "wearBeanieMoves": "wear_beanie_moves_v1.png",
     "wearBike": "wear_bikehelmet_v1.png",

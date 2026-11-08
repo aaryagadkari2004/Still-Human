@@ -36,6 +36,8 @@ right-click to remove one, C to re-centre.
 - Fist fighting: click to punch toward the mouse. Fists only reach about a metre and hit within a
   ~110° arc. Each punch does 9-14 damage (zombies have 100), staggers the zombie, interrupts its
   attack and knocks it back a little. Weapons will plug into the same system.
+- Zombie deaths: the body staggers from the last blow, topples away from it, bounces as it lands,
+  and a blood pool spreads underneath. Bodies stay for 90 seconds, then fade.
 - Every zombie gets its own clothing colours (top and bottom; dresses are one colour). Skin, hair,
   eyes, blood and shoes keep the original art.
 - Hordes: lone zombies are most common (55%), then groups of 2-4 (28%), hordes of 5-8 (12%) and

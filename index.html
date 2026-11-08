@@ -62,7 +62,7 @@
   <h1>STILL HUMAN</h1>
   <div class="tag">Every world is new. Every death is final.</div>
   <div id="slots"></div>
-  <div class="foot">Build 2026-11-07 22:27</div>
+  <div class="foot">Build 2026-11-07 22:35</div>
 </div>
 
 <div id="pause" class="screen hidden">
@@ -980,7 +980,7 @@ function updateHordes(dt) {
   }
 }
 function updateZombies(dt) {
-  zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN && !(z.dead && z.deadT > 0.9));
+  zombies = zombies.filter(z => Math.hypot(z.x - player.x, z.y - player.y) < Z_DESPAWN && !z.dead);
   const alive = new Set(zombies.map(z => z.horde));
   for (const id of hordes.keys()) if (!alive.has(id)) hordes.delete(id);
   zSpawnT -= dt;
@@ -1130,12 +1130,65 @@ function hitZombie(z, W, ang) {
   for (let i = 0; i < 3; i++) blood.push({ x: z.x + (Math.random() * 12 - 6), y: z.y - 1 - Math.random() * 5, t: performance.now(), s: Math.random() < 0.5 ? 3 : 2 });
   if (z.hp <= 0) {
     z.dead = true; z.deadT = 0; z.moving = false;
+    addCorpse(z, ang);
     for (let i = 0; i < 9; i++) blood.push({ x: z.x + (Math.random() * 22 - 11), y: z.y - 2 + Math.random() * 6, t: performance.now(), s: 3 });
   }
 }
 canvas.addEventListener('mousedown', e => { if (e.button === 0 && state === 'play' && !invOpen) { mouse.down = true; mouse.x = e.clientX; mouse.y = e.clientY; if (player) startAttack(); } });
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+
+// ---- Zombie deaths ----------------------------------------------------------------------------
+// When a zombie dies it staggers back from the blow, then topples over sideways (falling away
+// from the hit, accelerating like gravity), bounces slightly as it lands, and lies still while
+// a pool of blood spreads under it. Bodies stay for a while, then fade away.
+const CORPSE_LIFE = 90, CORPSE_FADE = 4, CORPSE_MAX = 40;
+let corpses = [];
+function addCorpse(z, ang) {
+  const c = Math.cos(ang);
+  const side = Math.abs(c) < 0.3 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(c);
+  corpses.push({ x: z.x, y: z.y, sheet: zombieSheet(z), fx: 0, fy: IDLE_ROW[z.dir], side,
+    kx: Math.cos(ang) * 5, ky: Math.sin(ang) * 3, t: 0, pool: 7 + Math.random() * 5 });
+  if (corpses.length > CORPSE_MAX) corpses.shift();
+}
+function updateCorpses(dt) {
+  for (const c of corpses) c.t += dt;
+  corpses = corpses.filter(c => c.t < CORPSE_LIFE + CORPSE_FADE && Math.hypot(c.x - player.x, c.y - player.y) < Z_DESPAWN + 10 * TILE);
+}
+function corpsePose(t, side) {
+  // Returns [rotation in degrees, stagger 0..1].
+  if (t < 0.14) return [side * 8 * (t / 0.14), t / 0.14];                       // stagger back
+  if (t < 0.52) { const p = (t - 0.14) / 0.38; return [side * (8 + 82 * p * p), 1]; } // topple
+  if (t < 0.66) { const p = (t - 0.52) / 0.14; return [side * (90 - 9 * Math.sin(Math.PI * p)), 1]; } // bounce
+  return [side * 90, 1];
+}
+function renderCorpses(camX, camY) {
+  for (const c of corpses) {
+    if (c.x < camX - 70 || c.x > camX + BW + 70 || c.y < camY - 70 || c.y > camY + BH + 40) continue;
+    const [deg, st] = corpsePose(c.t, c.side);
+    const fade = c.t > CORPSE_LIFE ? 1 - (c.t - CORPSE_LIFE) / CORPSE_FADE : 1;
+    const bx = c.x + c.kx * st, by = c.y + c.ky * st;
+    // Blood pool under the torso, spreading after the body lands.
+    if (c.t > 0.6) {
+      const g = Math.min(1, (c.t - 0.6) / 3), r = c.pool * (0.3 + 0.7 * g);
+      bctx.globalAlpha = 0.7 * fade; bctx.fillStyle = '#5a0d0a';
+      bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 22), Math.round(by), Math.round(r * 1.6), Math.round(r * 0.6), 0, 0, Math.PI * 2); bctx.fill();
+    }
+    // Shadow stretches out as the body goes down.
+    const lie = Math.abs(deg) / 90;
+    bctx.globalAlpha = 0.3 * fade; bctx.fillStyle = '#10140a';
+    bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 20 * lie), Math.round(by), Math.round(9 + 16 * lie), Math.round(3 + 2 * lie), 0, 0, Math.PI * 2); bctx.fill();
+    // The body pivots on its feet.
+    bctx.globalAlpha = fade;
+    bctx.save();
+    bctx.translate(Math.round(bx), Math.round(by - 2 * (1 - lie)));
+    bctx.rotate(deg * Math.PI / 180);
+    bctx.drawImage(c.sheet, c.fx * PF, c.fy * PF, PF, PF, -P_AX, -P_AY, PF, PF);
+    bctx.restore();
+    bctx.globalAlpha = 1;
+  }
+}
 
 // ---- World rendering ---------------------------------------------------------------------------
 let frameTime = 0;
@@ -1155,7 +1208,7 @@ function renderWorld(camX, camY, withPlayer) {
   const cx1 = Math.floor((camX + BW) / CPX), cy1 = Math.floor((camY + BH) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++)
     bctx.drawImage(getChunkCanvas(cx, cy, true), cx * CPX, cy * CPX);
-  if (withPlayer) renderBlood(camX, camY, frameTime);
+  if (withPlayer) { renderBlood(camX, camY, frameTime); renderCorpses(camX, camY); }
   // Pre-build one chunk canvas just outside the view each frame, so walking stays smooth.
   outer: for (let cy = cy0 - 1; cy <= cy1 + 1; cy++) for (let cx = cx0 - 1; cx <= cx1 + 1; cx++)
     if (!canvasCache.has(ck(cx, cy))) { getChunkCanvas(cx, cy, true); break outer; }
@@ -1197,15 +1250,6 @@ function renderWorld(camX, camY, withPlayer) {
       let lx = 0, ly = 0;
       if (o.z.mode === 'attack' && o.z.atk < 0.15) { const v = { N: [0, -3], S: [0, 3], E: [3, 0], W: [-3, 0] }[o.z.dir]; lx = v[0]; ly = v[1]; }
       const z = o.z;
-      if (z.dead) {
-        // No death animation yet: the body sinks and fades into the ground.
-        const t = Math.min(1, z.deadT / 0.9);
-        bctx.save(); bctx.globalAlpha = 1 - t;
-        bctx.beginPath(); bctx.rect(o.x - P_AX - 4, o.y - P_AY - 4, PF + 8, P_AY + 4); bctx.clip();
-        bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX), Math.round(o.y - P_AY + t * 18), PF, PF);
-        bctx.restore();
-        continue;
-      }
       if (z.stun > 0) { const v = { N: [0, 2], S: [0, -2], E: [-2, 0], W: [2, 0] }[z.dir]; lx += v[0]; ly += v[1]; }
       if (z.flash > 0) bctx.filter = 'brightness(2.4) saturate(0.3)';
       bctx.drawImage(zombieSheet(z), fx * PF, fy * PF, PF, PF, Math.round(o.x - P_AX + lx), Math.round(o.y - P_AY + ly), PF, PF);
@@ -1754,7 +1798,7 @@ function startPlaying() {
   state = 'play';
   lastAutosave = performance.now();
   hurtFx.shake = 0; hurtFx.flash = 0; hurtFx.deathT = 0; hurtFx.lagHp = player.hp;
-  blood = []; bloodT = 0;
+  blood = []; bloodT = 0; corpses = [];
   revealAround(player.x, player.y);
 }
 function newGame(n) {
@@ -1826,6 +1870,7 @@ function loop(now) {
   } else if (player) {
     if (state === 'play' || state === 'map') {
       if (state === 'play') { updatePlayer(dt); updateAttack(dt); }
+      updateCorpses(dt);
       playTime += dt;
       updateZombies(dt);
       if (state === 'play' || state === 'map') updateBleeding(dt);
@@ -1886,7 +1931,7 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, spawnGroup, get hordes() { return hordes; },
+  startAttack, mouse, get corpses() { return corpses; }, spawnGroup, get hordes() { return hordes; },
   spawnZombie(dx, dy) { const z = makeZombie('walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();
 

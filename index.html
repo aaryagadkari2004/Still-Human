@@ -62,7 +62,7 @@
   <h1>STILL HUMAN</h1>
   <div class="tag">Every world is new. Every death is final.</div>
   <div id="slots"></div>
-  <div class="foot">Build 2026-11-08 20:00</div>
+  <div class="foot">Build 2026-11-08 20:16</div>
 </div>
 
 <div id="pause" class="screen hidden">
@@ -701,7 +701,34 @@ function iconFor(key) {
   og.drawImage(t, x0, y0, w, h, 0, 0, w * sc, h * sc);
   return (iconCache[key] = out);
 }
+// Interior wall sheets: the dark doorway in the open and broken door cells is made see-through, so
+// from inside a house an open door shows the room (or the outside) beyond instead of a black hole.
+function seeThroughDoorways(img) {
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height), p = d.data, W = c.width;
+  for (const cx of [32, 64]) {
+    // Seed: the darkest pixel on the middle row of the doorway.
+    let seed = -1, best = 1e9;
+    for (let x = cx + 8; x < cx + 24; x++) { const i = ((48 + 30) * W + x) * 4, v = p[i] + p[i + 1] + p[i + 2]; if (v < best) { best = v; seed = x; } }
+    const si = ((48 + 30) * W + seed) * 4, sr = p[si], sg = p[si + 1], sb = p[si + 2];
+    const seen = new Set(), stack = [[seed, 78]];
+    while (stack.length) {
+      const [x, y] = stack.pop(), k = y * W + x;
+      if (x < cx || x >= cx + 32 || y < 48 || y >= 96 || seen.has(k)) continue;
+      seen.add(k);
+      const i = k * 4;
+      if (Math.abs(p[i] - sr) + Math.abs(p[i + 1] - sg) + Math.abs(p[i + 2] - sb) > 24) continue;
+      p[i + 3] = 0;
+      stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    }
+  }
+  g.putImageData(d, 0, 0);
+  return c;
+}
 function prepareAssets() {
+  IMG.intWall = seeThroughDoorways(IMG.intWall); IMG.intWall.leaflessDoor = true;
+  IMG.storeIntWall = seeThroughDoorways(IMG.storeIntWall);
   // Stockroom boxes: the medium camp crate, until store furniture art arrives.
   { const c = document.createElement('canvas'); c.width = 24; c.height = 20; c.getContext('2d').drawImage(IMG.camp, 148, 38, 24, 20, 0, 0, 24, 20); IMG.fBoxes = c; }
   // Tents are drawn a little larger than on the camp sheet (1.25x, nearest-neighbour).
@@ -2727,6 +2754,12 @@ function drawWallTile(b, tx, ty, cut) {
     bctx.drawImage(intWallSheet(b), sx + (xa - px), sy + 48 - h, xb - xa, h, xa + shake, base - h, xb - xa, h);
     if (ty !== 0) { bctx.fillStyle = 'rgba(0,0,0,0.1)'; bctx.fillRect(xa, base - h, xb - xa, h); }
     for (let i = 0; i < Math.min(h, 24); i++) { bctx.fillStyle = `rgba(0,0,0,${0.3 * (i / 24) ** 2})`; bctx.fillRect(xa, base - Math.min(h, 24) + i, xb - xa, 1); }
+    // The cabin sheet's open door is just a doorway: draw the door leaf swung open against the frame.
+    if (o && o.kind === 'door' && st === 'open' && h === WALL_H && intWallSheet(b).leaflessDoor) {
+      const sh = intWallSheet(b);
+      bctx.drawImage(sh, 8, 48 + 14, 18, 32, px + 6 + shake, base - 34, 5, 32);
+      bctx.fillStyle = 'rgba(0,0,0,0.3)'; bctx.fillRect(px + 10 + shake, base - 34, 1, 32);
+    }
     if (!w) bctx.drawImage(intWallSheet(b), 0, 48 - h, 5, h, cx - 4, base - h, 5, h);
     if (!e) bctx.drawImage(intWallSheet(b), 123, 48 - h, 5, h, cx - 1, base - h, 5, h);
   } else if (!s) {
@@ -2744,6 +2777,13 @@ function drawWallTile(b, tx, ty, cut) {
     [tsx, tsy] = WALLTOP[key] || WALLTOP.NESW;
   }
   bctx.drawImage(o ? IMG.wallOpen : IMG.wallTop, tsx, tsy, 32, 32, px + shake, (b.y + ty) * TILE - h, 32, 32);
+  // When the front wall is cut down, the side walls step down to meet it. Fill that step with more
+  // wall top, or it shows as a gap in the side wall.
+  if (cut && ty === L.H - 2 && s && !(e || w)) {
+    const top = (b.y + ty) * TILE - h, gapEnd = (b.y + ty + 1) * TILE - WALL_CUT;
+    const [vx, vy] = WALLTOP.NS || [32, 0];
+    for (let y = top + 32; y < gapEnd; y += 32) bctx.drawImage(IMG.wallTop, vx, vy, 32, Math.min(32, gapEnd - y + 12), px, y, 32, Math.min(32, gapEnd - y + 12));
+  }
 }
 const WALLTOP = { EW: [0, 0], E: [0, 96], W: [64, 96], NS: [32, 0], N: [96, 64], S: [32, 96], NE: [64, 0], ES: [96, 0], SW: [0, 32], NW: [32, 32],
   NES: [64, 32], ESW: [96, 32], NSW: [0, 64], NEW: [32, 64], NESW: [64, 64] };

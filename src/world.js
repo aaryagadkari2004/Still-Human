@@ -49,6 +49,18 @@ const KINDS = [
   { name: 'crateS',   img: 'camp', sx: 88, sy: 44, sw: 16, sh: 14, ax: 8,  ay: 12, cw: 12, ch: 6,  rx: 7,  ry: 2, low: true, crate: 'crateS' },
   { name: 'crateM',   img: 'camp', sx: 148, sy: 38, sw: 24, sh: 20, ax: 12, ay: 18, cw: 18, ch: 7, rx: 10, ry: 3, low: true, crate: 'crateM' },
   { name: 'crateL',   img: 'camp', sx: 208, sy: 32, sw: 32, sh: 26, ax: 16, ay: 24, cw: 28, ch: 9, rx: 15, ry: 3, crate: 'crateL' },
+  // Farm: fence pieces (all jumpable; colliders are set per piece in game.js) and corn stalks.
+  { name: 'fenceH',      img: 'fence', sx: 0,  sy: 0,  sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'fenceV',      img: 'fence', sx: 32, sy: 0,  sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'fenceBL',     img: 'fence', sx: 64, sy: 0,  sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'fenceBR',     img: 'fence', sx: 64, sy: 0,  sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true, flip: true },
+  { name: 'fenceTL',     img: 'fence', sx: 12, sy: 0,  sw: 20, sh: 32, ax: 4,  ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'fenceTR',     img: 'fence', sx: 0,  sy: 0,  sw: 20, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'fenceBroken', img: 'fence', sx: 64, sy: 32, sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'gate',        img: 'fence', sx: 0,  sy: 32, sw: 32, sh: 32, ax: 16, ay: 31, rx: 0, ry: 0, low: true, fence: true },
+  { name: 'corn1', img: 'crops', sx: 32, sy: 0, sw: 32, sh: 64, ax: 16, ay: 62, rx: 0, ry: 0, tall: true },
+  { name: 'corn2', img: 'crops', sx: 64, sy: 0, sw: 32, sh: 64, ax: 16, ay: 62, rx: 0, ry: 0, tall: true },
+  { name: 'corn3', img: 'crops', sx: 96, sy: 0, sw: 32, sh: 64, ax: 16, ay: 62, rx: 0, ry: 0, tall: true },
   { name: 'campfire', img: 'camp', sx: 0,  sy: 64, sw: 64, sh: 64, ax: 32, ay: 56, cw: 20, ch: 7,  rx: 0,  ry: 0, fire: true },
 ];
 const K = Object.fromEntries(KINDS.map((k, i) => [k.name, i]));
@@ -183,6 +195,15 @@ class WorldGen {
         if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) bld[ty * CHUNK + tx] = 1;
       }
     }
+    // Farms clear their field and paddock; the field is tilled soil.
+    const soil = new Uint8Array(CHUNK * CHUNK);
+    for (const f of plans.farms || []) {
+      for (const [rects, arr] of [[f.lots, lot], [f.soil, soil]]) for (const r of rects)
+        for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
+          const tx = x - cx * CHUNK, ty = y - cy * CHUNK;
+          if (tx >= 0 && ty >= 0 && tx < CHUNK && ty < CHUNK) arr[ty * CHUNK + tx] = 1;
+        }
+    }
     // Camps clear a small round patch of forest around their fire.
     for (const c of plans.camps || []) {
       for (let y = c.ty - CAMP_CLEAR; y <= c.ty + CAMP_CLEAR; y++) for (let x = c.tx - CAMP_CLEAR; x <= c.tx + CAMP_CLEAR; x++) {
@@ -224,8 +245,8 @@ class WorldGen {
     const objects = [];
     const used = new Uint8Array(CHUNK * CHUNK);
     const s = this.seed;
-    // Camp pieces whose base falls inside this chunk.
-    for (const c of plans.camps || []) for (const o of c.objects) {
+    // Camp and farm pieces whose base falls inside this chunk.
+    for (const c of [...(plans.camps || []), ...(plans.farms || [])]) for (const o of c.objects) {
       if (Math.floor(o.x / CPX) === cx && Math.floor(o.y / CPX) === cy) objects.push(o);
     }
 
@@ -277,7 +298,7 @@ class WorldGen {
     const details = [];
     for (let ty = 0; ty < CHUNK; ty++) for (let tx = 0; tx < CHUNK; tx++) {
       const k = ty * CHUNK + tx;
-      if ((type[k] !== T_GRASS && type[k] !== T_DRY) || bld[k]) continue;
+      if ((type[k] !== T_GRASS && type[k] !== T_DRY) || bld[k] || soil[k]) continue;
       const wx = bx + tx, wy = by + ty;
       if (hash01(wx, wy, s ^ 0x301) > 0.07) continue;
       const h = hashInt(wx, wy, s ^ 0x302);
@@ -286,7 +307,7 @@ class WorldGen {
 
     // Objects sorted by depth once, so drawing only needs a merge.
     objects.sort((a, b) => a.y - b.y);
-    return { cx, cy, type, edge, vari, objects, details, bld, buildings: plans.buildings.filter(b => b.x < bx + CHUNK && b.x + b.w > bx && b.y < by + CHUNK && b.y + b.h > by) };
+    return { cx, cy, type, edge, vari, objects, details, bld, soil, buildings: plans.buildings.filter(b => b.x < bx + CHUNK && b.x + b.w > bx && b.y < by + CHUNK && b.y + b.h > by) };
   }
 }
 

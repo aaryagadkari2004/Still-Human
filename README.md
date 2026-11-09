@@ -93,6 +93,13 @@ right-click to remove one, C to re-centre.
 - Flashlight: press F (or right-click it) to switch it on; it lights a cone toward the mouse at
   night. Batteries last about 10 minutes; right-click batteries to refill it.
 - Matches and lighters: click a cold campfire to light it (matches and lighters have limited uses).
+- Farms: rare, standalone, only on open grassland. A red barn (double doors that open and break
+  together, a side door, loft windows) with a dirt yard and track, a fenced paddock with a gate,
+  and a field of dead corn. Barn loot: farm tools (pitchfork, shovel, sickle, shears), duct tape,
+  rope, work gloves, jars of preserves. Fences can be jumped; click a gate to open or close it.
+  Crouching in the corn makes you much harder to spot. (Barn furniture uses stand-in sprites.)
+- Inventory tooltips show what an item is under its name: Weapon, Clothing, Consumable, Craftable
+  or Tool, each in its own colour.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,
   with flickering flame and drifting smoke) and none, one or a few crates (small, medium, large)
   holding canned food, water, medical supplies and camping gear. Click a crate to search it.

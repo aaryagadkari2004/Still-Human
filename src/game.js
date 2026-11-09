@@ -45,6 +45,8 @@ const ICONS = {
   hoodie: ['wearHoodie', 0, 0, 1, 64], leatherjacket: ['wearLeather', 0, 0, 1, 64], wintercoat: ['wearCoat', 0, 0, 1, 64], utilityvest: ['wearVest', 0, 0, 1, 64],
   candy: ['itemsStore', 0, 0], energy: ['itemsStore', 1, 0], peaches: ['itemsStore', 2, 0], peanutbutter: ['itemsStore', 3, 0],
   flashlight: ['itemsStore', 0, 1], batteries: ['itemsStore', 1, 1], lighter: ['itemsStore', 2, 1], matches: ['itemsStore', 3, 1],
+  pitchfork: ['itemsFarm', 0, 0], shovel: ['itemsFarm', 1, 0], sickle: ['itemsFarm', 2, 0], shears: ['itemsFarm', 3, 0],
+  ducttape: ['itemsFarm', 0, 1], rope: ['itemsFarm', 1, 1], gloves: ['itemsFarm', 2, 1], preserves: ['itemsFarm', 3, 1],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -91,6 +93,7 @@ function seeThroughDoorways(img) {
 function prepareAssets() {
   IMG.intWall = seeThroughDoorways(IMG.intWall); IMG.intWall.leaflessDoor = true;
   IMG.storeIntWall = seeThroughDoorways(IMG.storeIntWall);
+  IMG.barnIntWall = seeThroughDoorways(IMG.barnIntWall);
   // Stockroom boxes: the medium camp crate, until store furniture art arrives.
   { const c = document.createElement('canvas'); c.width = 24; c.height = 20; c.getContext('2d').drawImage(IMG.camp, 148, 38, 24, 20, 0, 0, 24, 20); IMG.fBoxes = c; }
   // Tents are drawn a little larger than on the camp sheet (1.25x, nearest-neighbour).
@@ -192,6 +195,9 @@ function buildChunkCanvas(cx, cy) {
     const [sx, sy] = DETAIL_CELLS[det.d];
     g.drawImage(IMG.ground, sx + 16, sy + 16, TILE, TILE, det.x, det.y, TILE, TILE);
   }
+  // Tilled field soil on farms.
+  if (d.soil) for (let i = 0; i < CHUNK * CHUNK; i++) if (d.soil[i])
+    g.drawImage(IMG.crops, 0, 0, TILE, TILE, (i % CHUNK) * TILE, Math.floor(i / CHUNK) * TILE, TILE, TILE);
   return c;
 }
 function getChunkCanvas(cx, cy, mustHave) {
@@ -278,6 +284,16 @@ function inWater(x, y) {
   const [a, b, c, d] = waterRect(tx, ty, e);
   return x > a && x < c && y - 3 > b && y - 3 < d;
 }
+// Fence colliders, relative to the piece's base point (tile centre, bottom of the tile).
+// Vertical runs block the full tile height; horizontal runs a thin strip along the bottom.
+const FENCE_BOXES = {
+  fenceH: [[-16, -6, 16, 0]], gate: [[-16, -6, 16, 0]], fenceV: [[-4, -32, 4, 0]],
+  fenceBL: [[-4, -32, 4, 0], [-4, -6, 16, 0]], fenceBR: [[-4, -32, 4, 0], [-16, -6, 4, 0]],
+  fenceTL: [[-4, -6, 16, 0]], fenceTR: [[-16, -6, 4, 0]],
+  fenceBroken: [[-16, -6, -10, 0], [10, -6, 16, 0]],   // posts only: the gap in between is open
+};
+function fenceBoxes(o) { return o.gate != null && gateOpen(o) ? [[-16, -6, -12, 0], [12, -6, 16, 0]] : FENCE_BOXES[KINDS[o.k].name]; }
+function gateOpen(o) { const s = bstate.get(o.farm.id); return !!(s && s.g && s.g[o.gate]); }
 function blocked(x0, y0, x1, y1, opt) {
   if (!(opt && opt.water)) for (let ty = Math.floor(y0 / TILE); ty <= Math.floor((y1 - 0.01) / TILE); ty++)
     for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x1 - 0.01) / TILE); tx++) {
@@ -296,7 +312,13 @@ function blocked(x0, y0, x1, y1, opt) {
   const cy0 = Math.floor((y0 - 32) / CPX), cy1 = Math.floor((y1 + 32) / CPX);
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     for (const o of getData(cx, cy).objects) {
-      const k = KINDS[o.k]; if (!k.cw || (opt && opt.low && k.low)) continue;
+      const k = KINDS[o.k];
+      if (k.fence) {
+        if (opt && opt.low) continue;
+        for (const [a, b2, c, d] of fenceBoxes(o)) if (rectsHit(x0, y0, x1, y1, o.x + a, o.y + b2, o.x + c, o.y + d)) return true;
+        continue;
+      }
+      if (!k.cw || (opt && opt.low && k.low)) continue;
       if (rectsHit(x0, y0, x1, y1, o.x - k.cw / 2, o.y - k.ch, o.x + k.cw / 2, o.y)) return true;
     }
   }
@@ -1091,9 +1113,9 @@ function renderCorpses(camX, camY) {
 const WALL_H = 48, WALL_CUT = 14, ROOF_OH = 6;
 const EXT_SHEETS = ['cabLogs', 'cabRed', 'cabDark'];
 // Each kind of building has its own wall, interior and floor sheets (all in the same layouts).
-function extSheet(b) { return b.kind === 'store' ? IMG.storeExt : IMG[EXT_SHEETS[b.mat]]; }
-function intWallSheet(b) { return b.kind === 'store' ? IMG.storeIntWall : IMG.intWall; }
-function floorSheet(b) { return b.kind === 'store' ? IMG.floorStore : IMG.floorWood; }
+function extSheet(b) { return b.kind === 'store' ? IMG.storeExt : b.kind === 'barn' ? IMG.barnExt : IMG[EXT_SHEETS[b.mat]]; }
+function intWallSheet(b) { return b.kind === 'store' ? IMG.storeIntWall : b.kind === 'barn' ? IMG.barnIntWall : IMG.intWall; }
+function floorSheet(b) { return b.kind === 'store' ? IMG.floorStore : b.kind === 'barn' ? IMG.floorBarn : IMG.floorWood; }
 const OPEN_HP = { door: 100, window: 60, boarded: 140 };
 const BANG_RATE = 4;            // damage per second per zombie, only when 3+ are hitting the same door/window
 const BANG_MIN = 3;
@@ -1114,6 +1136,7 @@ function openingState(b, i) {
   const s = bstate.get(b.id);
   if (s && s.o[i]) return s.o[i].st;
   const o = layoutBuilding(b).openings[i];
+  if (o.wide === 'R' && o.pair >= 0) return openingState(b, o.pair);   // a double door's halves match
   const r = hash01(b.seed, i, 0x55);
   if (o.kind === 'door') {
     if (!o.outer) return r < (b.cond === 'locked' ? 0.3 : 0.6) ? 'open' : 'closed';
@@ -1127,6 +1150,8 @@ function openingState(b, i) {
 }
 function setOpening(b, i, st) {
   const s = bState(b); s.o[i] = { st, hp: s.o[i] ? s.o[i].hp : undefined };
+  const pair = layoutBuilding(b).openings[i].pair;   // double doors move together
+  if (pair != null && pair >= 0) s.o[pair] = { st, hp: s.o[pair] ? s.o[pair].hp : undefined };
   b._col = null; b._gfx = null;
 }
 function passable(b, i) {
@@ -1336,6 +1361,12 @@ function buildExterior(b) {
       const i = south.get(tx), o = L.openings[i], st = openingState(b, i);
       sy = 48;
       sx = o.kind === 'door' ? (st === 'closed' ? 0 : st === 'open' ? 32 : 64) : (st === 'intact' ? 96 : st === 'broken' ? 128 : 160);
+      // Barn double doors: half of the 64px door art per tile.
+      if (o.wide) {
+        const col = st === 'closed' ? 0 : st === 'open' ? 64 : 128;
+        g.drawImage(IMG.barnDoors, col + (o.wide === 'L' ? 0 : 32), 0, 32, 48, X(px), Y(base - 48), 32, 48);
+        continue;
+      }
       // Storefront: while both halves are intact, the pair is drawn as one wide shop window.
       if (o.shop && st === 'intact') {
         const j = south.get(o.shop === 'L' ? tx + 1 : tx - 1);
@@ -1384,7 +1415,7 @@ function buildRoof(b) {
   g.fillStyle = '#2e2016'; g.fillRect(0, rh - 4, rw, 3); g.fillStyle = '#120c08'; g.fillRect(0, rh - 1, rw, 1);
   g.fillRect(rw - 1, 0, 1, rh);
   // Chimney on some houses.
-  if (b.seed % 3 !== 0) {
+  if (b.kind !== 'barn' && b.seed % 3 !== 0) {
     const cx = Math.round(rw * (b.seed % 2 ? 0.72 : 0.26)), cy = split - 26;
     g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.moveTo(cx + 14, cy + 4); g.lineTo(cx + 24, cy + 12); g.lineTo(cx + 24, cy + 28); g.lineTo(cx + 14, cy + 24); g.fill();
     g.fillStyle = '#6e5446'; g.fillRect(cx, cy, 14, 24); g.fillStyle = '#4e3b31'; g.fillRect(cx + 9, cy, 5, 24);
@@ -1604,6 +1635,10 @@ function findNearby() {
   // Crates at camps (only from outside).
   if (!pb) for (const o of objectsIn(px - 96, py - 96, px + 96, py + 96)) {
     const k = KINDS[o.k];
+    if (o.gate != null) {   // farm gates open and close with a click
+      out.push({ type: 'gate', o, rect: [o.x - 16, o.y - 24, o.x + 16, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 12)] });
+      continue;
+    }
     if (k.fire && o.camp && !fireLit(o)) {   // a cold campfire can be lit
       out.push({ type: 'fire', o, rect: [o.x - 14, o.y - 14, o.x + 14, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 8)] });
       continue;
@@ -1639,6 +1674,16 @@ function updateInteract(dt) {
 }
 function useInteractable(it) {
   if (it.type === 'fire') { lightFire(it.o); return; }
+  if (it.type === 'gate') {
+    const s = bState(it.o.farm); s.g = s.g || {};
+    if (s.g[it.o.gate]) {
+      const inWay = [player, ...zombies.filter(z => !z.dead), ...animals].some(a => Math.abs(a.x - it.o.x) < 18 && Math.abs(a.y - it.o.y) < 10);
+      if (inWay) { toast('Something is in the way'); return; }
+    }
+    s.g[it.o.gate] = !s.g[it.o.gate];
+    makeNoise(it.o.x, it.o.y, NOISE.door * 0.6, true);
+    return;
+  }
   if (it.type === 'door') {
     const st = openingState(it.b, it.i);
     const [cx, cy] = openingCenter(it.b, layoutBuilding(it.b).openings[it.i]);
@@ -1738,9 +1783,15 @@ function seesThroughOpening(z, pb) {
   return false;
 }
 // Zombies notice what's in front of them; up close they notice you from any direction.
+// Standing in a farm field (tall dead corn).
+function inCorn(x, y) {
+  const tx = Math.floor(x / TILE), ty = Math.floor((y - 2) / TILE);
+  const d = getData(Math.floor(tx / CHUNK), Math.floor(ty / CHUNK));
+  return !!(d.soil && d.soil[(ty - Math.floor(ty / CHUNK) * CHUNK) * CHUNK + (tx - Math.floor(tx / CHUNK) * CHUNK)]);
+}
 function inView(z, dx, dy, d, T) {
   // A crouching player is only spotted from about 60% as far, and has to be closer to be noticed from behind.
-  const sight = T.sight * (player.crouch ? 0.6 : 1) * weatherSightMul(), near = (player.crouch ? 2 : 3) * TILE;
+  const sight = T.sight * (player.crouch ? (inCorn(player.x, player.y) ? 0.35 : 0.6) : 1) * weatherSightMul(), near = (player.crouch ? 2 : 3) * TILE;
   if (d < near || z.mode === 'chase' || z.mode === 'bang' || z.mode === 'attack') return d < sight;
   const f = DIR_VEC[z.dir];
   return d < sight && (dx * f[0] + dy * f[1]) / d > 0.35;   // roughly a 140° cone
@@ -1851,9 +1902,13 @@ function renderWorld(camX, camY, withPlayer) {
     const k = KINDS[o.k], sx = o.x - k.ax, sy = o.y - k.ay;
     let fade = false;
     if (withPlayer && k.tall && player.y < o.y &&
-        rectsHit(pbx0, pby0, pbx0 + 22, player.y, sx + 4, sy, sx + k.sw - 4, o.y - k.ch)) fade = true;
+        rectsHit(pbx0, pby0, pbx0 + 22, player.y, sx + 4, sy, sx + k.sw - 4, o.y - (k.ch || 0))) fade = true;
     if (fade) bctx.globalAlpha = 0.45;
-    bctx.drawImage(k.img ? IMG[k.img] : IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
+    if (k.flip) {
+      bctx.save(); bctx.translate(sx + k.sw, sy); bctx.scale(-1, 1);
+      bctx.drawImage(IMG[k.img], k.sx, k.sy, k.sw, k.sh, 0, 0, k.sw, k.sh); bctx.restore();
+    } else if (o.gate != null && gateOpen(o)) bctx.drawImage(IMG.fence, 32, 32, 32, 32, sx, sy, 32, 32);
+    else bctx.drawImage(k.img ? IMG[k.img] : IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
     if (k.fire && fireLit(o)) {
       // Smoke then flame, at the same origin as the fire ring. They loop on their own clocks:
       // the flame flickers quickly while the smoke drifts slowly.
@@ -2308,6 +2363,17 @@ function renderContainerPanel(g, H) {
   if (container.items.every(x => !x)) pixelText(g, 'EMPTY', Math.round(w / 2 - textWidth('EMPTY') / 2), 34 + Math.ceil(container.items.length / 2) * 36 + 4, UI_DIM);
   pixelText(g, 'RIGHT-CLICK: USE', 9, H - 14, UI_DIM);
 }
+// Item kinds shown in the inventory tooltip: [label, colour].
+const TAG_COLORS = { Weapon: '#e8644f', Clothing: '#b48cf0', Consumable: '#7fd46a', Craftable: '#5ab4e8', Tool: '#e0b45a' };
+function itemTags(it) {
+  const def = ITEMS[it.key] || it, out = [];
+  if (def.weapon) out.push('Weapon');
+  if (['helmet', 'clothes', 'pants', 'shoes', 'backpack'].includes(def.cat) || def.clothing) out.push('Clothing');
+  if (['eat', 'medical', 'antiseptic', 'batteries'].includes(def.use) || it.key === 'matches') out.push('Consumable');
+  if (def.craft || TEARABLE[it.key] || it.key === 'rag') out.push('Craftable');
+  if (it.key === 'flashlight' || it.key === 'lighter') out.push('Tool');
+  return out.map(t => [t, TAG_COLORS[t]]);
+}
 function itemLabel(it) {
   const def = ITEMS[it.key] || it;
   if (def.protect) {
@@ -2365,12 +2431,25 @@ function renderInventory(now) {
     pixelText(g, t, BODY_BOX.x + 58 - Math.floor(textWidth(t) / 2), 178, alt ? '#ff5a45' : v > 60 ? UI_ACCENT : v > 30 ? '#e0b45a' : '#e8644f');
   }
   // Hovered item name, or a message.
-  let tip = invMsg && now < invMsg.until ? invMsg.t : invDrag && invDrag.item.use === 'medical' ? 'Drop on a body part to treat it'
-    : (invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? itemLabel(getItem(invHover.slot)) : null);
-  if (tip) {
-    const w = textWidth(tip) + 8;
+  const tip = invHover && invHover.slot && !invDrag && getItem(invHover.slot) ? itemLabel(getItem(invHover.slot)) : null;
+  // Messages go along the bottom of the panel.
+  if (invMsg && now < invMsg.until || (invDrag && invDrag.item.use === 'medical')) {
+    const t = invMsg && now < invMsg.until ? invMsg.t : 'Drop on a body part to treat it', w = textWidth(t) + 8;
     g.fillStyle = '#0c1213'; g.fillRect(Math.round(INV_W / 2 - w / 2), H - 12, w, 9);
-    pixelText(g, tip, Math.round(INV_W / 2 - w / 2) + 4, H - 10, invMsg && now < invMsg.until ? '#e0b45a' : UI_TEXT);
+    pixelText(g, t, Math.round(INV_W / 2 - w / 2) + 4, H - 10, invMsg && now < invMsg.until ? '#e0b45a' : UI_TEXT);
+  } else if (tip && invMouse) {
+    // Item tooltip just above the cursor: the name, and under it what kind of thing it is,
+    // each kind in its own colour.
+    const tags = itemTags(getItem(invHover.slot));
+    const tagW = tags.reduce((s, [t]) => s + textWidth(t), 0) + Math.max(0, tags.length - 1) * 8;
+    const w = Math.max(textWidth(tip), tagW) + 8, h = tags.length ? 20 : 11;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    const x = Math.max(1, Math.min(invCanvas.width - w - 1, Math.round(invMouse[0] - w / 2))), y = Math.max(1, invMouse[1] - h - 8);
+    g.fillStyle = '#0c1213'; g.fillRect(x, y, w, h);
+    g.strokeStyle = '#3a4a48'; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    pixelText(g, tip, x + Math.round((w - textWidth(tip)) / 2), y + 2, UI_TEXT);
+    let tx = x + Math.round((w - tagW) / 2);
+    for (const [t, col] of tags) { pixelText(g, t, tx, y + 11, col); tx += textWidth(t) + 8; }
   }
   // The item being dragged follows the cursor.
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -2392,10 +2471,11 @@ function invPoint(e) {
 function anySlotAt(x, y) { return contSlotAt(x, y) || slotAt(x - invOX(), y); }
 invCanvas.addEventListener('mousemove', e => {
   const [x, y] = invPoint(e);
-  invHover = { slot: anySlotAt(x, y), part: bodyPartAt(x - invOX(), y) };
+  invHover = { slot: anySlotAt(x, y), part: bodyPartAt(x - invOX(), y) }; invMouse = [x, y];
   if (invDrag) { invDrag.px = x; invDrag.py = y; }
 });
-invCanvas.addEventListener('mouseleave', () => { invHover = null; });
+invCanvas.addEventListener('mouseleave', () => { invHover = null; invMouse = null; });
+let invMouse = null;
 invCanvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   const [x, y] = invPoint(e), ref = anySlotAt(x, y);
@@ -2448,6 +2528,15 @@ const ITEMS = {
   flashlight: { name: 'Flashlight', cat: 'misc', abbr: 'FLS', use: 'flashlight' },
   batteries:  { name: 'Batteries', cat: 'misc', abbr: 'BAT', use: 'batteries' },
   lighter:    { name: 'Lighter', cat: 'misc', abbr: 'LTR', use: 'fire', uses: 30 },
+  // Farm tools (weapons) and supplies.
+  pitchfork: { name: 'Pitchfork', cat: 'weapon', abbr: 'PFK', weapon: 'pitchfork' },
+  shovel:    { name: 'Shovel', cat: 'weapon', abbr: 'SHV', weapon: 'shovel' },
+  sickle:    { name: 'Sickle', cat: 'weapon', abbr: 'SKL', weapon: 'sickle' },
+  shears:    { name: 'Garden shears', cat: 'weapon', abbr: 'SHR', weapon: 'shears' },
+  ducttape:  { name: 'Duct tape', cat: 'misc', abbr: 'TPE', craft: true },
+  rope:      { name: 'Rope', cat: 'misc', abbr: 'RPE', craft: true },
+  gloves:    { name: 'Work gloves', cat: 'misc', abbr: 'GLV', clothing: true },
+  preserves: { name: 'Jar of preserves', cat: 'misc', abbr: 'JAR', use: 'eat', food: 26, drink: 6 },
   matches:    { name: 'Matches', cat: 'misc', abbr: 'MTC', use: 'fire', uses: 8 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
   hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'HAT', weapon: 'hatchet' },
@@ -2481,19 +2570,23 @@ function makeItem(key) {
 // Each container rolls every line once: [item, chance]. Most finds are small.
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
-  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
-  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25]] },
+  counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15], ['preserves', 0.08]] },
+  dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25], ['gloves', 0.05]] },
   // General store. Shelves: groceries and a few household supplies; coolers: drinks; the checkout:
   // small things kept by the register; stockroom boxes: bulk stock.
   storeShelf: { name: 'Store shelf', slots: 4, loot: [['beans', 0.3], ['soup', 0.25], ['peaches', 0.25], ['peanutbutter', 0.18], ['chips', 0.3], ['candy', 0.3], ['bread', 0.1], ['rag', 0.08], ['bandage', 0.06], ['batteries', 0.12], ['flashlight', 0.05], ['matches', 0.1]] },
   cooler:     { name: 'Drinks cooler', slots: 4, loot: [['water', 0.45], ['soda', 0.45], ['juice', 0.25], ['energy', 0.35], ['water', 0.2]] },
   checkout:   { name: 'Checkout counter', slots: 3, loot: [['candy', 0.3], ['lighter', 0.25], ['matches', 0.2], ['batteries', 0.15], ['energy', 0.1]] },
   stockroom:  { name: 'Boxes', slots: 4, loot: [['beans', 0.4], ['water', 0.4], ['soup', 0.3], ['peaches', 0.3], ['chips', 0.3], ['batteries', 0.2], ['flashlight', 0.1], ['rag', 0.15]] },
+  // Barn: tools hang on the rack, odds and ends on the workbench, feed sacks hold rags and rope.
+  workbench: { name: 'Workbench', slots: 4, loot: [['ducttape', 0.3], ['rope', 0.2], ['gloves', 0.15], ['shears', 0.12], ['sickle', 0.12], ['shovel', 0.06], ['crowbar', 0.05], ['hatchet', 0.05], ['rag', 0.15], ['lighter', 0.05]] },
+  toolrack:  { name: 'Tool rack', slots: 3, loot: [['pitchfork', 0.3], ['shovel', 0.3], ['sickle', 0.15], ['axe', 0.06], ['rope', 0.15], ['gloves', 0.1]] },
+  feedsacks: { name: 'Feed sacks', slots: 3, loot: [['rag', 0.25], ['rope', 0.2], ['preserves', 0.15], ['gloves', 0.05]] },
   // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
   crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
   crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05], ['matches', 0.2], ['flashlight', 0.06]] },
   crateL:  { name: 'Large crate', slots: 6, loot: [['beans', 0.45], ['soup', 0.35], ['water', 0.5], ['water', 0.25], ['bandage', 0.2], ['firstaid', 0.06], ['antiseptic', 0.08], ['hatchet', 0.14], ['axe', 0.06], ['wintercoat', 0.08], ['beanie', 0.1], ['utilityvest', 0.05], ['bagM', 0.06], ['bagL', 0.02], ['lighter', 0.15], ['flashlight', 0.1], ['batteries', 0.12]] },
-  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['utilityvest', 0.04], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
+  shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['utilityvest', 0.04], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015], ['ducttape', 0.1], ['rope', 0.05]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
 // cooldown = seconds between swings, noise in tiles.
@@ -2505,6 +2598,11 @@ Object.assign(WEAPONS, {
   crowbar:    { name: 'Crowbar',       reach: 37, arc: 55, damage: [25, 33], cooldown: 0.65, duration: 0.4,  hitAt: 0.2,  knockback: 8,  stun: 0.4,  noise: 5 },
   bat:        { name: 'Baseball bat',  reach: 41, arc: 75, damage: [22, 30], cooldown: 0.7,  duration: 0.42, hitAt: 0.21, knockback: 15, stun: 0.55, noise: 5 },
   hatchet:    { name: 'Hatchet',       reach: 34, arc: 55, damage: [30, 42], cooldown: 0.75, duration: 0.42, hitAt: 0.22, knockback: 9,  stun: 0.45, noise: 4 },
+  sickle:     { name: 'Sickle',        reach: 30, arc: 60, damage: [20, 28], cooldown: 0.4,  duration: 0.3,  hitAt: 0.15, knockback: 4,  stun: 0.25, noise: 3 },
+  shears:     { name: 'Garden shears', reach: 31, arc: 35, damage: [16, 24], cooldown: 0.45, duration: 0.32, hitAt: 0.16, knockback: 3,  stun: 0.25, noise: 3 },
+  shovel:     { name: 'Shovel',        reach: 40, arc: 65, damage: [24, 32], cooldown: 0.75, duration: 0.44, hitAt: 0.22, knockback: 13, stun: 0.55, noise: 6 },
+  // A pitchfork is a thrust: long reach, narrow, slow.
+  pitchfork:  { name: 'Pitchfork',     reach: 48, arc: 28, damage: [26, 34], cooldown: 0.9,  duration: 0.5,  hitAt: 0.28, knockback: 14, stun: 0.5,  noise: 4 },
   axe:        { name: 'Axe',           reach: 43, arc: 70, damage: [48, 62], cooldown: 1.1,  duration: 0.55, hitAt: 0.3,  knockback: 13, stun: 0.6,  noise: 6, heavy: true },
 });
 function containerType(f) { return f.crate ? f.name : FURN[f.name].container; }

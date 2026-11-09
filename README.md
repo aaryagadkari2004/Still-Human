@@ -98,6 +98,11 @@ right-click to remove one, C to re-centre.
   and a field of dead corn. Barn loot: farm tools (pitchfork, shovel, sickle, shears), duct tape,
   rope, work gloves, jars of preserves. Fences can be jumped; click a gate to open or close it.
   Crouching in the corn makes you much harder to spot. (Barn furniture uses stand-in sprites.)
+- Farm animals live in farm paddocks only: cows, pigs, chickens, horses and a farm dog (German
+  shepherd, border collie or Jack Russell). Each farm keeps its own mix. All are passive and run
+  when hit; chickens scatter if you walk right up to them. Dogs are wary of strangers but come over
+  if you carry food: click one while carrying peanut butter to feed and tame it, and it follows
+  you from then on. Killed farm animals stay dead; a tamed dog is kept in your save.
 - Inventory tooltips show what an item is under its name: Weapon, Clothing, Consumable, Craftable
   or Tool, each in its own colour.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,

@@ -1005,7 +1005,7 @@ function updateAttack(dt) {
     };
     for (const z of zombies) consider(z, 0, false);
     // Big animals are easier to reach (their bodies are long).
-    for (const an of animals) consider(an, Math.max(0, ANIMAL_TYPES[an.sp].radius - 8), true);
+    for (const an of animals) if (!an.tamed) consider(an, Math.max(0, ANIMAL_TYPES[an.sp].radius - 8), true);
     if (best) { if (isAnimal) hitAnimal(best, W, a.ang); else hitZombie(best, W, a.ang); makeNoise(p.x, p.y, W.noise || NOISE.punch, true); }
   }
   if (a.t >= W.duration) { p.attack = null; p.attackCd = W.cooldown - W.duration; }
@@ -1091,6 +1091,14 @@ function renderCorpses(camX, camY) {
     bctx.globalAlpha = 0.3 * fade; bctx.fillStyle = '#10140a';
     bctx.beginPath(); bctx.ellipse(Math.round(bx + c.side * 20 * lie), Math.round(by), Math.round(9 + 16 * lie), Math.round(3 + 2 * lie), 0, 0, Math.PI * 2); bctx.fill();
     bctx.globalAlpha = fade;
+    if (c.animal && c.noDeathSheet) {
+      // No death animation drawn yet: the legs give way and the body sinks onto its side.
+      const p = Math.min(1, c.t / 0.45), e = p * p;
+      bctx.save(); bctx.translate(Math.round(bx), Math.round(by)); bctx.rotate(0.14 * e); bctx.scale(1, 1 - 0.38 * e);
+      bctx.drawImage(c.sheet, 0, c.fy * PF, PF, PF, -32, -A_ANCHOR, PF, PF);
+      bctx.restore(); bctx.globalAlpha = 1;
+      continue;
+    }
     if (c.animal) {
       // Animals play their own 4-frame collapse, then stay on the last frame.
       const f = Math.min(3, Math.floor(c.t / A_DEATH_TIME * 4));
@@ -1641,6 +1649,11 @@ function findNearby() {
       out.push({ type: 'search', b, f, rect, dot: [Math.round((rect[0] + rect[2]) / 2), Math.round((rect[1] + rect[3]) / 2)] });
     }
   }
+  // Farm dogs: feed one to tame it.
+  if (!pb && carriesDogFood()) for (const a of animals) {
+    if (a.dead || a.tamed || ANIMAL_TYPES[a.sp].kind !== 'dog' || Math.hypot(a.x - px, a.y - py) > 72) continue;
+    out.push({ type: 'feed', a, rect: [a.x - 14, a.y - 30, a.x + 14, a.y + 2], dot: [Math.round(a.x), Math.round(a.y - 34)] });
+  }
   // Crates at camps (only from outside).
   if (!pb) for (const o of objectsIn(px - 96, py - 96, px + 96, py + 96)) {
     const k = KINDS[o.k];
@@ -1683,6 +1696,7 @@ function updateInteract(dt) {
 }
 function useInteractable(it) {
   if (it.type === 'fire') { lightFire(it.o); return; }
+  if (it.type === 'feed') { feedDog(it.a); return; }
   if (it.type === 'gate') {
     const s = bState(it.o.farm); s.g = s.g || {};
     if (s.g[it.o.gate]) {
@@ -2950,6 +2964,6 @@ loadImages().then(() => {
 // Hooks for automated testing.
 window.__SH = { get state() { return state; }, get player() { return player; }, get world() { return world; }, tileAt, newGame, saveGame, loadGame, killPlayer: c => startDying(c), hurtPlayer, zombies: () => zombies,
   giveItem, makeBackpack, makeItem: k => makeItem(k), useItem, updateNeeds, bleedLevel, get blood() { return blood; }, get inv() { return inv; }, openInventory, closeInventory, get invOpen() { return invOpen; },
-  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, get clock() { return clock; }, setWeather, get weather() { return weather; }, get flash() { return flash; }, set clock(v) { clock = v; }, nightness, phaseName, dayNumber, makeAnimal, spawnAnimals, killAnimal, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
+  startAttack, mouse, makeNoise, NOISE, get nearby() { return nearby; }, get hoverIt() { return hoverIt; }, useInteractable, get searching() { return searching; }, get corpses() { return corpses; }, animals: () => animals, get clock() { return clock; }, setWeather, get weather() { return weather; }, get flash() { return flash; }, set clock(v) { clock = v; }, nightness, phaseName, dayNumber, makeAnimal, spawnAnimals, killAnimal, farmStock, spawnFarmAnimals, spawnGroup, get hordes() { return hordes; }, setOpening, openingState, buildingAt,
   spawnZombie(dx, dy, type) { const z = makeZombie(type || 'walker', player.x + dx, player.y + dy); zombies.push(z); return z; }, openMap, closeMap, markers: () => markers, explored: () => explored, canvasCache, dataCache };
 })();

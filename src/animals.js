@@ -19,7 +19,19 @@ const ANIMAL_TYPES = {
              kind: 'skittish', fear: 3.5 * TILE, knockMul: 1, stunMul: 1 },
   raccoon: { name: 'Raccoon', img: 'animalRaccoon', death: 'animalRaccoonDeath', hp: 24,  walk: 22, run: 112, radius: 7,  shadow: [9, 2],  animRate: 5,
              kind: 'thief', fear: 2.5 * TILE, knockMul: 0.8, stunMul: 0.8 },
+ // Farm animals: only on farms, living in the paddock. All passive; hit one and it runs.
+  cow:     { name: 'Cow',     img: 'farmCow',     hp: 200, walk: 16, run: 92,  radius: 14, shadow: [16, 4], animRate: 2.6, kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
+  pig:     { name: 'Pig',     img: 'farmPig',     hp: 90,  walk: 18, run: 104, radius: 10, shadow: [12, 3], animRate: 3.4, kind: 'farm', knockMul: 0.4,  stunMul: 0.5 },
+  chicken: { name: 'Chicken', img: 'farmChicken', hp: 8,   walk: 20, run: 112, radius: 4,  shadow: [5, 2],  animRate: 6,   kind: 'farm', scatter: 1.5 * TILE, knockMul: 1, stunMul: 1 },
+  horse:   { name: 'Horse',   img: 'farmHorse',   hp: 220, walk: 24, run: 170, radius: 14, shadow: [16, 4], animRate: 3,   kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
+  // Farm dogs: wary of strangers, but they come over if you carry food, and feeding one tames it.
+  // A tame dog follows you around.
+  shepherd: { name: 'German shepherd',    img: 'dogShepherd', hp: 60, walk: 30, run: 150, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.6, stunMul: 0.6 },
+  collie:   { name: 'Border collie',      img: 'dogCollie',   hp: 50, walk: 30, run: 155, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.7, stunMul: 0.7 },
+  terrier:  { name: 'Jack Russell terrier', img: 'dogTerrier', hp: 35, walk: 30, run: 145, radius: 5, shadow: [7, 2], animRate: 5, kind: 'dog', knockMul: 0.9, stunMul: 0.9 },
 };
+// Foods a dog will take from you.
+const DOG_FOODS = ['dogfood', 'peanutbutter'];
 const A_CAP = 8;                   // most animals around the player at once
 const BEAR_GAP = 50 * TILE;        // bears keep well apart from each other
 const RACCOON_STEAL_CHANCE = 0.6;  // chance a raccoon actually takes something from a crate it rummages in
@@ -93,6 +105,7 @@ function updateAnimal(a, dt) {
   if (a.stun > 0) { a.stun -= dt; a.moving = false; return; }
   a.moving = false;
 
+  if (T.kind === 'farm' || T.kind === 'dog') { updateFarmAnimal(a, T, dt); a.anim += dt * (a.moving ? T.animRate * Math.sqrt(Math.max(0.5, a.speed / T.walk)) : 2.5); return; }
   // Skittish animals and raccoons bolt from people, zombies and loud noises.
   if ((T.kind === 'skittish' || T.kind === 'thief') && a.mode !== 'flee') {
     const th = closestThreat(a, T.fear, true);
@@ -207,6 +220,104 @@ function updateAnimal(a, dt) {
   a.anim += dt * rate;
 }
 
+// ---- Farm animals and dogs ------------------------------------------------------------------------
+function penTarget(a) {
+  // Somewhere inside the paddock (one tile in from the fence).
+  const p = a.pen;
+  return [(p.x + 1 + Math.random() * (p.w - 2)) * TILE, (p.y + 1 + Math.random() * (p.h - 2)) * TILE + 20];
+}
+function carriesDogFood() { return carriedItems().find(i => DOG_FOODS.includes(i.key)); }
+function updateFarmAnimal(a, T, dt) {
+  const dp = Math.hypot(player.x - a.x, player.y - a.y), alive = player.hp > 0;
+  if (a.tamed) {
+    // Follow the player: trot to catch up, sit still when close.
+    if (a.mode === 'flee') { a.t -= dt; moveAnimal(a, a.fx, a.fy, T.run, dt); if (a.t <= 0) a.mode = 'idle'; return; }
+    if (dp > 16 * TILE && !onScreen(a.x, a.y)) {   // got left far behind: catch up out of sight
+      const [x, y] = behindPlayer(); if (x != null) { a.x = x; a.y = y; }
+      return;
+    }
+    if (dp > 2.5 * TILE) moveAnimal(a, player.x - a.x, player.y - a.y, dp > 6 * TILE ? T.run : T.walk * 2.2, dt);
+    else faceToward(a, player.x - a.x, player.y - a.y);
+    return;
+  }
+  if (a.mode === 'flee') {
+    a.t -= dt; moveAnimal(a, a.fx, a.fy, T.run, dt);
+    if (a.t <= 0) { a.mode = 'idle'; a.t = 1 + Math.random() * 2; }
+    return;
+  }
+  // Chickens scatter if you walk right up to them.
+  if (T.scatter && alive && dp < T.scatter) { startFlee(a, player.x, player.y, 1.2); return; }
+  if (T.kind === 'dog' && alive && !buildingAt(player.x, player.y - 4)) {
+    if (carriesDogFood() && dp < 7 * TILE) {
+      // Smells food: comes over and waits a step away from you.
+      if (dp > 1.6 * TILE) moveAnimal(a, player.x - a.x, player.y - a.y, T.walk * 1.6, dt);
+      else faceToward(a, player.x - a.x, player.y - a.y);
+      a.anim += dt * 2; return;
+    }
+    if (dp < 2.2 * TILE) { startFlee(a, player.x, player.y, 1.2); return; }   // wary of strangers
+  }
+  if (a.mode === 'wander') {
+    a.t -= dt;
+    if (Math.hypot(a.gx - a.x, a.gy - a.y) < 6 || a.t <= 0) { a.mode = 'idle'; a.t = 2 + Math.random() * 6; }
+    else moveAnimal(a, a.gx - a.x, a.gy - a.y, T.walk, dt);
+    return;
+  }
+  a.t -= dt;
+  if (a.t <= 0) { [a.gx, a.gy] = a.pen ? penTarget(a) : wanderTarget(a.x, a.y, 2, 5); a.mode = 'wander'; a.t = 10; }
+}
+function onScreen(x, y) { return Math.abs(x - player.x) < BW / 2 + 48 && Math.abs(y - player.y) < BH / 2 + 80; }
+function behindPlayer() {
+  for (let i = 0; i < 12; i++) {
+    const ang = Math.random() * Math.PI * 2, r = (12 + Math.random() * 3) * TILE;
+    const x = player.x + Math.cos(ang) * r, y = player.y + Math.sin(ang) * r;
+    if (!onScreen(x, y) && animalCanStand(x, y)) return [x, y];
+  }
+  return [null, null];
+}
+function feedDog(a) {
+  const food = carriesDogFood();
+  if (!food) { flashMsg('You have nothing a dog would eat'); return; }
+  for (const k in inv.equip) if (inv.equip[k] === food) inv.equip[k] = null;
+  inv.storage = inv.storage.map(i => i === food ? null : i);
+  a.tamed = true; a.mode = 'idle'; a.pen = null;
+  if (a.farmRef) { const s = bState(a.farmRef); s.tamed = s.tamed || {}; s.tamed[a.fi] = true; }
+  flashMsg(`The ${ANIMAL_TYPES[a.sp].name.toLowerCase()} is yours now. It will follow you`);
+  if (invOpen) layoutInventory();
+}
+// Each farm's animals are fixed by its seed: which kinds it keeps and how many.
+function farmStock(f) {
+  if (f._stock) return f._stock;
+  const r = k => hash01(f.seed, k, 0xfa12), out = [];
+  const add = (sp, n) => { for (let i = 0; i < n; i++) out.push(sp); };
+  if (r(1) < 0.55) add('cow', 1 + Math.floor(r(2) * 3));
+  if (r(3) < 0.45) add('pig', 1 + Math.floor(r(4) * 3));
+  if (r(5) < 0.6) add('chicken', 2 + Math.floor(r(6) * 4));
+  if (r(7) < 0.3) add('horse', 1 + Math.floor(r(8) * 2));
+  if (r(9) < 0.5) add(['shepherd', 'collie', 'terrier'][Math.floor(r(10) * 3)], 1);
+  if (!out.length) add('cow', 2);
+  return (f._stock = out);
+}
+// Farms near the player get their animals (the ones still alive and not taken), inside the paddock.
+function spawnFarmAnimals() {
+  const tx = Math.floor(player.x / TILE), ty = Math.floor(player.y / TILE), R = 34;
+  for (const f of plansInRect(world, tx - R, ty - R, tx + R, ty + R).farms) {
+    if (!f.pen) continue;
+    const s = bstate.get(f.id) || {};
+    farmStock(f).forEach((sp, i) => {
+      if ((s.dead && s.dead[i]) || (s.tamed && s.tamed[i])) return;
+      if (animals.some(a => a.farm === f.id && a.fi === i)) return;
+      for (let k = 0; k < 8; k++) {
+        const [x, y] = penTarget({ pen: f.pen });
+        if (!animalCanStand(x, y)) continue;
+        const a = makeAnimal(sp, x, y);
+        a.farm = f.id; a.farmRef = f; a.fi = i; a.pen = f.pen;
+        animals.push(a);
+        return;
+      }
+    });
+  }
+}
+
 // ---- Raccoons and crates ---------------------------------------------------------------------------
 // Camp crates near a raccoon that it hasn't been through yet (and that the player isn't standing by).
 function findCrateFor(a) {
@@ -245,15 +356,17 @@ function hitAnimal(a, W, ang) {
   if (!feetBlocked(a.x, a.y + ky)) a.y += ky;
   for (let i = 0; i < 2; i++) blood.push({ x: a.x + (Math.random() * 10 - 5), y: a.y - 1 - Math.random() * 4, t: performance.now(), s: 2 });
   if (a.hp <= 0) { killAnimal(a, ang); return; }
-  if (T.kind === 'skittish' || T.kind === 'thief') startFlee(a, player.x, player.y, 4);
+  if (T.kind === 'skittish' || T.kind === 'thief' || T.kind === 'farm' || T.kind === 'dog') startFlee(a, player.x, player.y, 4);
   else if (T.kind === 'defensive') { a.angry = T.angerTime; a.target = player; a.mode = 'charge'; }
   else { a.target = player; a.mode = 'charge'; a.home = { x: a.x, y: a.y }; }   // a bear fights back wherever it is
 }
 function killAnimal(a, ang) {
   const T = ANIMAL_TYPES[a.sp];
   a.dead = true; a.moving = false;
+  if (a.farmRef) { const s = bState(a.farmRef); s.dead = s.dead || {}; s.dead[a.fi] = true; }
   // Plays the animal's own collapse animation for the way it was facing.
-  corpses.push({ animal: a.sp, x: a.x, y: a.y, sheet: IMG[T.death], fx: 0, fy: A_DIR4_ROW[a.dir],
+  corpses.push({ animal: a.sp, x: a.x, y: a.y, sheet: IMG[T.death || T.img], noDeathSheet: !T.death, fx: 0,
+    fy: T.death ? A_DIR4_ROW[a.dir] : (a.dir === 'W' ? IDLE_ROW.W : IDLE_ROW.E),
     side: 0, kx: Math.cos(ang) * 3, ky: Math.sin(ang) * 2, t: 0, pool: T.radius * 0.7 + 2, loot: a.loot });
   if (corpses.length > CORPSE_MAX) corpses.shift();
   for (let i = 0; i < Math.ceil(T.radius / 2); i++) blood.push({ x: a.x + (Math.random() * 2 - 1) * T.radius, y: a.y - 2 + Math.random() * 5, t: performance.now(), s: 3 });
@@ -332,11 +445,12 @@ function spawnRaccoonNearCamp() {
   return 0;
 }
 function updateAnimals(dt) {
-  animals = animals.filter(a => !a.dead && Math.hypot(a.x - player.x, a.y - player.y) < Z_DESPAWN);
+  animals = animals.filter(a => !a.dead && (a.tamed || Math.hypot(a.x - player.x, a.y - player.y) < Z_DESPAWN));
   aSpawnT -= dt;
   if (aSpawnT <= 0) {
     aSpawnT = 8 + Math.random() * 7;
-    if (animals.length < A_CAP) { if (Math.random() < 0.3) spawnRaccoonNearCamp() || spawnAnimals(); else spawnAnimals(); }
+    spawnFarmAnimals();
+    if (animals.filter(a => !a.farm && !a.tamed).length < A_CAP) { if (Math.random() < 0.3) spawnRaccoonNearCamp() || spawnAnimals(); else spawnAnimals(); }
   }
   for (const a of animals) updateAnimal(a, dt);
 }
@@ -357,13 +471,13 @@ function drawAnimal(a) {
   if (a.flash > 0) bctx.filter = 'none';
 }
 function saveAnimals() {
-  return animals.filter(a => !a.dead).map(a => ({ sp: a.sp, x: Math.round(a.x), y: Math.round(a.y), hp: a.hp, dir: a.dir,
-    hx: Math.round(a.home.x), hy: Math.round(a.home.y), loot: a.loot, visited: a.visited }));
+  return animals.filter(a => !a.dead && (!a.farm || a.tamed)).map(a => ({ sp: a.sp, x: Math.round(a.x), y: Math.round(a.y), hp: a.hp, dir: a.dir,
+    hx: Math.round(a.home.x), hy: Math.round(a.home.y), loot: a.loot, visited: a.visited, tamed: a.tamed || undefined }));
 }
 function loadAnimals(list) {
   animals = (list || []).filter(s => ANIMAL_TYPES[s.sp]).map(s => {
     const a = makeAnimal(s.sp, s.x, s.y);
-    a.hp = s.hp; a.dir = s.dir || 'S'; a.home = { x: s.hx ?? s.x, y: s.hy ?? s.y }; a.loot = s.loot || null; a.visited = s.visited || [];
+    a.hp = s.hp; a.dir = s.dir || 'S'; a.home = { x: s.hx ?? s.x, y: s.hy ?? s.y }; a.loot = s.loot || null; a.visited = s.visited || []; a.tamed = !!s.tamed;
     return a;
   });
   aSpawnT = 4;

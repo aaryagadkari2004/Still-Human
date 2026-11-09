@@ -50,6 +50,7 @@ const ICONS = {
   beef: ['itemsMeat', 0, 0], pork: ['itemsMeat', 1, 0], chickenmeat: ['itemsMeat', 2, 0], bearmeat: ['itemsMeat', 3, 0],
   moosemeat: ['itemsMeat', 0, 1], venison: ['itemsMeat', 1, 1], rabbitmeat: ['itemsMeat', 2, 1], raccoonmeat: ['itemsMeat', 3, 1],
   rotten_beef: ['itemsMeatRotten', 0, 0], rotten_pork: ['itemsMeatRotten', 1, 0], rotten_chickenmeat: ['itemsMeatRotten', 2, 0], rotten_bearmeat: ['itemsMeatRotten', 3, 0], rotten_moosemeat: ['itemsMeatRotten', 0, 1], rotten_venison: ['itemsMeatRotten', 1, 1], rotten_rabbitmeat: ['itemsMeatRotten', 2, 1], rotten_raccoonmeat: ['itemsMeatRotten', 3, 1],
+  dogfood: ['itemDogfood', 0, 0],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -2686,6 +2687,7 @@ const ITEMS = {
   rotten_venison: { name: 'Rotten venison', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
   rotten_rabbitmeat: { name: 'Rotten rabbit meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
   rotten_raccoonmeat: { name: 'Rotten raccoon meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  dogfood:   { name: 'Dog food', cat: 'misc', abbr: 'DOG', use: 'eat', food: 12, drink: -2 },
   preserves: { name: 'Jar of preserves', cat: 'misc', abbr: 'JAR', use: 'eat', food: 26, drink: 6 },
   matches:    { name: 'Matches', cat: 'misc', abbr: 'MTC', use: 'fire', uses: 8 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
@@ -2724,14 +2726,14 @@ const CONTAINERS = {
   dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25], ['gloves', 0.05]] },
   // General store. Shelves: groceries and a few household supplies; coolers: drinks; the checkout:
   // small things kept by the register; stockroom boxes: bulk stock.
-  storeShelf: { name: 'Store shelf', slots: 4, loot: [['beans', 0.3], ['soup', 0.25], ['peaches', 0.25], ['peanutbutter', 0.18], ['chips', 0.3], ['candy', 0.3], ['bread', 0.1], ['rag', 0.08], ['bandage', 0.06], ['batteries', 0.12], ['flashlight', 0.05], ['matches', 0.1]] },
+  storeShelf: { name: 'Store shelf', slots: 4, loot: [['beans', 0.3], ['soup', 0.25], ['peaches', 0.25], ['peanutbutter', 0.18], ['chips', 0.3], ['candy', 0.3], ['bread', 0.1], ['rag', 0.08], ['bandage', 0.06], ['batteries', 0.12], ['flashlight', 0.05], ['matches', 0.1], ['dogfood', 0.1]] },
   cooler:     { name: 'Drinks cooler', slots: 4, loot: [['water', 0.45], ['soda', 0.45], ['juice', 0.25], ['energy', 0.35], ['water', 0.2]] },
   checkout:   { name: 'Checkout counter', slots: 3, loot: [['candy', 0.3], ['lighter', 0.25], ['matches', 0.2], ['batteries', 0.15], ['energy', 0.1]] },
-  stockroom:  { name: 'Boxes', slots: 4, loot: [['beans', 0.4], ['water', 0.4], ['soup', 0.3], ['peaches', 0.3], ['chips', 0.3], ['batteries', 0.2], ['flashlight', 0.1], ['rag', 0.15]] },
+  stockroom:  { name: 'Boxes', slots: 4, loot: [['beans', 0.4], ['water', 0.4], ['soup', 0.3], ['peaches', 0.3], ['chips', 0.3], ['batteries', 0.2], ['flashlight', 0.1], ['rag', 0.15], ['dogfood', 0.12]] },
   // Barn: tools hang on the rack, odds and ends on the workbench, feed sacks hold rags and rope.
   workbench: { name: 'Workbench', slots: 4, loot: [['ducttape', 0.3], ['rope', 0.2], ['gloves', 0.15], ['shears', 0.12], ['sickle', 0.12], ['shovel', 0.06], ['crowbar', 0.05], ['hatchet', 0.05], ['rag', 0.15], ['lighter', 0.05]] },
   toolrack:  { name: 'Tool rack', slots: 3, loot: [['pitchfork', 0.3], ['shovel', 0.3], ['sickle', 0.15], ['axe', 0.06], ['rope', 0.15], ['gloves', 0.1]] },
-  feedsacks: { name: 'Feed sacks', slots: 3, loot: [['rag', 0.25], ['rope', 0.2], ['preserves', 0.15], ['gloves', 0.05]] },
+  feedsacks: { name: 'Feed sacks', slots: 3, loot: [['rag', 0.25], ['rope', 0.2], ['preserves', 0.15], ['gloves', 0.05], ['dogfood', 0.2]] },
   // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
   crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
   crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05], ['matches', 0.2], ['flashlight', 0.06]] },

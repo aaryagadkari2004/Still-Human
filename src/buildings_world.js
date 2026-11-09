@@ -30,6 +30,8 @@ const FURN = {
   feedsacks: { img: 'fFeedSacks', w: 1, h: 1, container: 'feedsacks' },
   hay:       { img: 'fHay',       w: 1, h: 1 },
   tractor:   { img: 'fTractor',   w: 2, h: 2 },
+  stall:     { img: 'fStall',     w: 1, h: 1 },
+  magrack:   { img: 'fMagRack',   w: 1, h: 1 },
 };
 
 // Floor plans. # wall, . floor, D outside door, d inside door, W window.
@@ -96,7 +98,7 @@ const TEMPLATES = [
       '#SS##D###SS#'],
     f: [['cooler', 1, 1], ['cooler', 2, 1], ['rack', 4, 1], ['rack', 6, 1],
         ['rack', 2, 3], ['rack', 4, 3],
-        ['rack', 1, 5], ['checkout', 7, 6],
+        ['rack', 1, 5], ['checkout', 7, 6], ['magrack', 3, 7],
         ['boxes', 9, 1], ['boxes', 10, 1], ['boxes', 10, 3]],
     z: [[3, 6], [9, 5], [6, 2]] },
   // Barn: one big open room with a double door, a small side door and loft windows.
@@ -110,7 +112,8 @@ const TEMPLATES = [
       '#........#',
       '###BB##D##'],
     f: [['workbench', 1, 1], ['toolrack', 4, 1], ['toolrack', 5, 1], ['feedsacks', 7, 1], ['feedsacks', 8, 1],
-        ['hay', 8, 2], ['hay', 8, 3], ['hay', 1, 3], ['tractor', 5, 3], ['feedsacks', 8, 5], ['workbench', 1, 5]],
+        ['hay', 8, 2], ['hay', 8, 3], ['hay', 1, 3], ['tractor', 5, 3], ['feedsacks', 8, 5], ['workbench', 1, 5],
+        ['stall', 6, 1], ['stall', 8, 4]],
     z: [[3, 3], [7, 5]] },
 ];
 for (const t of TEMPLATES) { t.h = t.grid.length; t.w = t.grid[0].length; }

@@ -100,7 +100,7 @@ right-click to remove one, C to re-centre.
 - Farm animals live in farm paddocks only: cows, pigs, chickens, horses and a farm dog (German
   shepherd, border collie or Jack Russell). Each farm keeps its own mix. All are passive and run
   when hit; chickens scatter if you walk right up to them. Dogs are wary of strangers but come over
-  if you carry food: click one while carrying peanut butter to feed and tame it, and it follows
+  if you carry food: click one while carrying dog food or peanut butter to feed and tame it, and it follows
   you from then on. Killed farm animals stay dead; a tamed dog is kept in your save.
 - Butchering: click a dead animal to butcher it (a couple of seconds the first time), then take
   the meat like loot: beef (cow, 4), pork (pig, 3), chicken (1), bear meat (4), moose meat (4),

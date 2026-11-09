@@ -1494,7 +1494,16 @@ function drawWallTile(b, tx, ty, cut) {
     const key = (n ? 'N' : '') + (e ? 'E' : '') + (s ? 'S' : '') + (w ? 'W' : '');
     [tsx, tsy] = WALLTOP[key] || WALLTOP.NESW;
   }
-  bctx.drawImage(o ? IMG.wallOpen : IMG.wallTop, tsx, tsy, 32, 32, px + shake, (b.y + ty) * TILE - h, 32, 32);
+  if (o && o.kind === 'door' && st === 'open' && !(e || w)) {
+    // Open door in a north-south wall: the door has swung 90 degrees, so it now stands across the
+    // room beside the doorway and we see its face. Draw the jambs, then the door itself.
+    const top = (b.y + ty) * TILE - h, fy = (b.y + ty) * TILE + 8, sh = intWallSheet(b);
+    bctx.drawImage(IMG.wallOpen, 32 + 12, 32, 8, 7, px + 12, top, 8, 7);
+    bctx.drawImage(IMG.wallOpen, 32 + 12, 32 + 24, 8, 8, px + 12, top + 24, 8, 8);
+    bctx.drawImage(sh, 7, 48 + 12, 18, 34, px - 6, fy - 34, 18, 34);
+    bctx.fillStyle = 'rgba(0,0,0,0.22)'; bctx.fillRect(px - 6, fy - 34, 18, 34);
+    bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(px - 6, fy - 1, 18, 3);   // contact shadow
+  } else bctx.drawImage(o ? IMG.wallOpen : IMG.wallTop, tsx, tsy, 32, 32, px + shake, (b.y + ty) * TILE - h, 32, 32);
   // When the front wall is cut down, the side walls step down to meet it. Fill that step with more
   // wall top, or it shows as a gap in the side wall.
   if (cut && ty === L.H - 2 && s && !(e || w)) {

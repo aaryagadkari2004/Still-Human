@@ -112,6 +112,9 @@ right-click to remove one, C to re-centre.
 - Meat goes off: raw meat rots after about one day-night cycle; in a fridge or drinks cooler it
   keeps about four times longer. The tooltip shows fresh / going off / nearly rotten. Rotten meat
   still fills you a little but makes you sick (hurts your torso).
+- Cooking: click a burning campfire while carrying raw meat to cook your first stack of it (3
+  seconds a piece; stay by the fire). Cooked meat is about 60% more filling, costs no thirst and
+  keeps two and a half times as long before rotting. Rotten meat can't be cooked.
 - Inventory tooltips show what an item is under its name: Weapon, Clothing, Consumable, Craftable
   or Tool, each in its own colour.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,

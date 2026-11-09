@@ -50,6 +50,7 @@ const ICONS = {
   beef: ['itemsMeat', 0, 0], pork: ['itemsMeat', 1, 0], chickenmeat: ['itemsMeat', 2, 0], bearmeat: ['itemsMeat', 3, 0],
   moosemeat: ['itemsMeat', 0, 1], venison: ['itemsMeat', 1, 1], rabbitmeat: ['itemsMeat', 2, 1], raccoonmeat: ['itemsMeat', 3, 1],
   rotten_beef: ['itemsMeatRotten', 0, 0], rotten_pork: ['itemsMeatRotten', 1, 0], rotten_chickenmeat: ['itemsMeatRotten', 2, 0], rotten_bearmeat: ['itemsMeatRotten', 3, 0], rotten_moosemeat: ['itemsMeatRotten', 0, 1], rotten_venison: ['itemsMeatRotten', 1, 1], rotten_rabbitmeat: ['itemsMeatRotten', 2, 1], rotten_raccoonmeat: ['itemsMeatRotten', 3, 1],
+  cooked_beef: ['itemsMeatCooked', 0, 0], cooked_pork: ['itemsMeatCooked', 1, 0], cooked_chickenmeat: ['itemsMeatCooked', 2, 0], cooked_bearmeat: ['itemsMeatCooked', 3, 0], cooked_moosemeat: ['itemsMeatCooked', 0, 1], cooked_venison: ['itemsMeatCooked', 1, 1], cooked_rabbitmeat: ['itemsMeatCooked', 2, 1], cooked_raccoonmeat: ['itemsMeatCooked', 3, 1],
   dogfood: ['itemDogfood', 0, 0],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
@@ -1678,6 +1679,10 @@ function findNearby() {
       out.push({ type: 'gate', o, rect: [o.x - 16, o.y - 24, o.x + 16, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 12)] });
       continue;
     }
+    if (k.fire && o.camp && fireLit(o) && rawMeat()) {   // cook raw meat on a burning fire
+      out.push({ type: 'cook', o, rect: [o.x - 14, o.y - 14, o.x + 14, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 8)] });
+      continue;
+    }
     if (k.fire && o.camp && !fireLit(o)) {   // a cold campfire can be lit
       out.push({ type: 'fire', o, rect: [o.x - 14, o.y - 14, o.x + 14, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 8)] });
       continue;
@@ -1702,6 +1707,12 @@ function updateInteract(dt) {
   canvas.style.cursor = hoverIt ? HAND_CURSOR : 'crosshair';
   if (searching) {
     // Keep searching while you stay close; walking off cancels it.
+    if (searching.it.type === 'cook') {
+      if (!nearby.some(it => it.type === 'cook' && it.o === searching.it.o)) { searching = null; return; }
+      searching.t += dt;
+      if (searching.t >= searching.dur) { finishCooking(); searching = null; }
+      return;
+    }
     if (searching.it.type === 'butcher') {
       if (!nearby.some(it => it.type === 'butcher' && it.c === searching.it.c)) { searching = null; return; }
       searching.t += dt;
@@ -1717,12 +1728,30 @@ function updateInteract(dt) {
     }
   }
 }
+// ---- Cooking ----
+// Click a burning campfire while carrying raw meat: the first stack of raw meat in your pack cooks
+// (a few seconds per piece). Stay by the fire until it's done.
+const COOK_TIME = 3;
+function rawMeat() { return inv.storage.find(i => i && ITEMS[i.key] && ITEMS[i.key].cooks); }
+function finishCooking() {
+  const raw = searching.it.meat;
+  if (!inv.storage.includes(raw)) return;
+  const i = inv.storage.indexOf(raw), d = ITEMS[raw.key];
+  inv.storage[i] = { ...makeItem(d.cooks), n: raw.n, spoil: (raw.spoil || 0) * 0.5 };
+  flashMsg(`Cooked ${(raw.n || 1) > 1 ? raw.n + ' pieces of ' : ''}${d.name.toLowerCase().replace('raw ', '')}`);
+  if (invOpen) layoutInventory();
+}
 function openCarcass(it) {
   container = { b: null, f: null, name: ANIMAL_TYPES[it.c.animal].name + ' carcass', items: it.c.items,
     px: it.c.x, py: it.c.y };
   if (!invOpen) openInventory(); else layoutInventory();
 }
 function useInteractable(it) {
+  if (it.type === 'cook') {
+    const meat = rawMeat(); if (!meat) return;
+    searching = { it: { ...it, meat }, t: 0, dur: COOK_TIME * (meat.n || 1) };
+    return;
+  }
   if (it.type === 'butcher') {
     if (it.c.butchered) openCarcass(it);
     else { searching = { it, t: 0 }; makeNoise(player.x, player.y, NOISE.search * 0.6, true); }
@@ -1769,7 +1798,7 @@ function renderInteractDots() {
   if (searching) {
     const [x0, y0, x1] = searching.it.rect, w = 22, x = Math.round((x0 + x1) / 2 - w / 2), y = Math.round(y0 - 7);
     bctx.fillStyle = '#000'; bctx.fillRect(x - 1, y - 1, w + 2, 5);
-    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x, y, Math.round(w * Math.min(1, searching.t / (searching.it.type === "butcher" ? BUTCHER_TIME : SEARCH_TIME))), 3);
+    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x, y, Math.round(w * Math.min(1, searching.t / (searching.dur || (searching.it.type === "butcher" ? BUTCHER_TIME : SEARCH_TIME)))), 3);
   }
 }
 let HAND_CURSOR = 'pointer';
@@ -2310,7 +2339,7 @@ function updateSpoilage(dt) {
   const age = (arr, i) => {
     const it = arr[i]; if (!it) return;
     const d = ITEMS[it.key]; if (!d || !d.rots) return;
-    it.spoil = (it.spoil || 0) + step * (it.cold ? COLD_RATE : 1);
+    it.spoil = (it.spoil || 0) + step * (it.cold ? COLD_RATE : 1) / (d.rotMul || 1);
     if (it.spoil >= ROT_TIME) arr[i] = { ...makeItem(d.rots), n: it.n, cold: it.cold };
   };
   for (const k in inv.equip) { const a = [inv.equip[k]]; age(a, 0); inv.equip[k] = a[0]; }
@@ -2670,14 +2699,23 @@ const ITEMS = {
   rope:      { name: 'Rope', cat: 'misc', abbr: 'RPE', craft: true },
   gloves:    { name: 'Work gloves', cat: 'misc', abbr: 'GLV', clothing: true },
   // Meat from animals. Raw for now (cooking comes later): filling, but it costs some thirst.
-  beef:        { name: 'Raw beef', cat: 'misc', abbr: 'BEF', use: 'eat', food: 22, drink: -4, meat: true, rots: 'rotten_beef' },
-  pork:        { name: 'Raw pork', cat: 'misc', abbr: 'PRK', use: 'eat', food: 20, drink: -4, meat: true, rots: 'rotten_pork' },
-  chickenmeat: { name: 'Raw chicken', cat: 'misc', abbr: 'CHK', use: 'eat', food: 14, drink: -3, meat: true, rots: 'rotten_chickenmeat' },
-  bearmeat:    { name: 'Bear meat', cat: 'misc', abbr: 'BRM', use: 'eat', food: 26, drink: -5, meat: true, rots: 'rotten_bearmeat' },
-  moosemeat:   { name: 'Moose meat', cat: 'misc', abbr: 'MSM', use: 'eat', food: 24, drink: -4, meat: true, rots: 'rotten_moosemeat' },
-  venison:     { name: 'Venison', cat: 'misc', abbr: 'VEN', use: 'eat', food: 20, drink: -3, meat: true, rots: 'rotten_venison' },
-  rabbitmeat:  { name: 'Rabbit meat', cat: 'misc', abbr: 'RBT', use: 'eat', food: 12, drink: -2, meat: true, rots: 'rotten_rabbitmeat' },
-  raccoonmeat: { name: 'Raccoon meat', cat: 'misc', abbr: 'RCN', use: 'eat', food: 10, drink: -3, meat: true, rots: 'rotten_raccoonmeat' },
+  beef:        { name: 'Raw beef', cat: 'misc', abbr: 'BEF', use: 'eat', food: 22, drink: -4, meat: true, rots: 'rotten_beef', cooks: 'cooked_beef' },
+  pork:        { name: 'Raw pork', cat: 'misc', abbr: 'PRK', use: 'eat', food: 20, drink: -4, meat: true, rots: 'rotten_pork', cooks: 'cooked_pork' },
+  chickenmeat: { name: 'Raw chicken', cat: 'misc', abbr: 'CHK', use: 'eat', food: 14, drink: -3, meat: true, rots: 'rotten_chickenmeat', cooks: 'cooked_chickenmeat' },
+  bearmeat:    { name: 'Bear meat', cat: 'misc', abbr: 'BRM', use: 'eat', food: 26, drink: -5, meat: true, rots: 'rotten_bearmeat', cooks: 'cooked_bearmeat' },
+  moosemeat:   { name: 'Moose meat', cat: 'misc', abbr: 'MSM', use: 'eat', food: 24, drink: -4, meat: true, rots: 'rotten_moosemeat', cooks: 'cooked_moosemeat' },
+  venison:     { name: 'Venison', cat: 'misc', abbr: 'VEN', use: 'eat', food: 20, drink: -3, meat: true, rots: 'rotten_venison', cooks: 'cooked_venison' },
+  rabbitmeat:  { name: 'Rabbit meat', cat: 'misc', abbr: 'RBT', use: 'eat', food: 12, drink: -2, meat: true, rots: 'rotten_rabbitmeat', cooks: 'cooked_rabbitmeat' },
+  raccoonmeat: { name: 'Raccoon meat', cat: 'misc', abbr: 'RCN', use: 'eat', food: 10, drink: -3, meat: true, rots: 'rotten_raccoonmeat', cooks: 'cooked_raccoonmeat' },
+  // Cooked meat: much more filling, no thirst, and it keeps two and a half times as long.
+  cooked_beef: { name: 'Cooked beef', cat: 'misc', abbr: 'CKD', use: 'eat', food: 35, drink: 0, rots: 'rotten_beef', rotMul: 2.5 },
+  cooked_pork: { name: 'Cooked pork', cat: 'misc', abbr: 'CKD', use: 'eat', food: 32, drink: 0, rots: 'rotten_pork', rotMul: 2.5 },
+  cooked_chickenmeat: { name: 'Roast chicken', cat: 'misc', abbr: 'CKD', use: 'eat', food: 22, drink: 0, rots: 'rotten_chickenmeat', rotMul: 2.5 },
+  cooked_bearmeat: { name: 'Cooked bear meat', cat: 'misc', abbr: 'CKD', use: 'eat', food: 42, drink: 0, rots: 'rotten_bearmeat', rotMul: 2.5 },
+  cooked_moosemeat: { name: 'Cooked moose', cat: 'misc', abbr: 'CKD', use: 'eat', food: 38, drink: 0, rots: 'rotten_moosemeat', rotMul: 2.5 },
+  cooked_venison: { name: 'Cooked venison', cat: 'misc', abbr: 'CKD', use: 'eat', food: 32, drink: 0, rots: 'rotten_venison', rotMul: 2.5 },
+  cooked_rabbitmeat: { name: 'Cooked rabbit', cat: 'misc', abbr: 'CKD', use: 'eat', food: 19, drink: 0, rots: 'rotten_rabbitmeat', rotMul: 2.5 },
+  cooked_raccoonmeat: { name: 'Cooked raccoon', cat: 'misc', abbr: 'CKD', use: 'eat', food: 16, drink: 0, rots: 'rotten_raccoonmeat', rotMul: 2.5 },
   // Meat that has gone off. Eating it makes you sick.
   rotten_beef: { name: 'Rotten beef', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
   rotten_pork: { name: 'Rotten pork', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },

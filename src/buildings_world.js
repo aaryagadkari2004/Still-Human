@@ -19,15 +19,17 @@ const FURN = {
   counter: { img: 'fCounter', w: 2, h: 1, container: 'counter' },
   table:   { img: 'fTable',   w: 2, h: 1 },
   chair:   { img: 'fChair',   w: 1, h: 1 },
-  // General store. Until the store furniture art arrives these borrow existing sprites.
-  rack:     { img: 'fShelf',   w: 1, h: 1, container: 'storeShelf' },
-  cooler:   { img: 'fFridge',  w: 1, h: 1, container: 'cooler' },
-  checkout: { img: 'fTable',   w: 2, h: 1, container: 'checkout' },
-  boxes:    { img: 'fBoxes',   w: 1, h: 1, container: 'stockroom' },
-  // Barn. Stand-in sprites until the barn furniture art arrives.
-  workbench: { img: 'fTable',  w: 2, h: 1, container: 'workbench' },
-  toolrack:  { img: 'fShelf',  w: 1, h: 1, container: 'toolrack' },
-  feedsacks: { img: 'fBoxes',  w: 1, h: 1, container: 'feedsacks' },
+  // General store. Shelves show their empty sprite once you've cleared them out.
+  rack:     { img: 'fStoreShelf', emptyImg: 'fStoreShelfEmpty', w: 2, h: 1, container: 'storeShelf' },
+  cooler:   { img: 'fCooler',   w: 1, h: 1, container: 'cooler' },
+  checkout: { img: 'fCheckout', w: 2, h: 1, container: 'checkout' },
+  boxes:    { img: 'fPallet',   w: 1, h: 1, container: 'stockroom' },
+  // Barn.
+  workbench: { img: 'fWorkbench', w: 2, h: 1, container: 'workbench' },
+  toolrack:  { img: 'fToolRack',  w: 1, h: 1, container: 'toolrack' },
+  feedsacks: { img: 'fFeedSacks', w: 1, h: 1, container: 'feedsacks' },
+  hay:       { img: 'fHay',       w: 1, h: 1 },
+  tractor:   { img: 'fTractor',   w: 2, h: 2 },
 };
 
 // Floor plans. # wall, . floor, D outside door, d inside door, W window.
@@ -92,9 +94,9 @@ const TEMPLATES = [
       '#..........W',
       '#..........#',
       '#SS##D###SS#'],
-    f: [['cooler', 1, 1], ['cooler', 2, 1], ['rack', 4, 1], ['rack', 5, 1], ['rack', 6, 1], ['rack', 7, 1],
-        ['rack', 2, 3], ['rack', 3, 3], ['rack', 4, 3], ['rack', 5, 3],
-        ['rack', 1, 5], ['rack', 1, 6], ['checkout', 7, 6],
+    f: [['cooler', 1, 1], ['cooler', 2, 1], ['rack', 4, 1], ['rack', 6, 1],
+        ['rack', 2, 3], ['rack', 4, 3],
+        ['rack', 1, 5], ['checkout', 7, 6],
         ['boxes', 9, 1], ['boxes', 10, 1], ['boxes', 10, 3]],
     z: [[3, 6], [9, 5], [6, 2]] },
   // Barn: one big open room with a double door, a small side door and loft windows.
@@ -108,8 +110,8 @@ const TEMPLATES = [
       '#........#',
       '###BB##D##'],
     f: [['workbench', 1, 1], ['toolrack', 4, 1], ['toolrack', 5, 1], ['feedsacks', 7, 1], ['feedsacks', 8, 1],
-        ['feedsacks', 8, 5], ['workbench', 1, 5]],
-    z: [[5, 4], [3, 3]] },
+        ['hay', 8, 2], ['hay', 8, 3], ['hay', 1, 3], ['tractor', 5, 3], ['feedsacks', 8, 5], ['workbench', 1, 5]],
+    z: [[3, 3], [7, 5]] },
 ];
 for (const t of TEMPLATES) { t.h = t.grid.length; t.w = t.grid[0].length; }
 

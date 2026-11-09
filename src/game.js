@@ -1541,7 +1541,10 @@ function furnOffset(b, f) {
   return (f._off = [dx, dy]);
 }
 function drawFurniture(b, f, searched) {
-  const F = FURN[f.name], img = f.name === 'bed' ? bedSprite(hashInt(b.seed, f.i, 3) % bedColors.length) : IMG[F.img];
+  const F = FURN[f.name];
+  // Shelves that have been searched and cleared out show as empty.
+  const cleared = F.emptyImg && searched && (() => { const c = (bstate.get(b.id) || { c: {} }).c[f.i]; return c && !c.some(Boolean); })();
+  const img = f.name === 'bed' ? bedSprite(hashInt(b.seed, f.i, 3) % bedColors.length) : IMG[cleared ? F.emptyImg : F.img];
   const [odx, ody] = furnOffset(b, f);
   const x = (b.x + f.x) * TILE + Math.round((F.w * TILE - img.width) / 2) + odx, bottom = (b.y + f.y + F.h) * TILE + ody;
   bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(x + 4, bottom - 6, img.width - 1, 6);

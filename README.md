@@ -88,8 +88,7 @@ right-click to remove one, C to re-centre.
     drops are coming later). Bears and moose have their own attack animations.
 - General stores: every hamlet has one brick store facing the road, with wide shop windows, a
   glass door and a flat roof. Inside: shelf aisles (groceries, candy, batteries, matches...),
-  drinks coolers, a checkout counter (lighters, matches, candy) and a stockroom of boxes.
-  (Store furniture uses stand-in sprites until its art is made.)
+  drinks coolers, a checkout counter (cleared shelves show as empty) (lighters, matches, candy) and a stockroom of boxes.
 - Flashlight: press F (or right-click it) to switch it on; it lights a cone toward the mouse at
   night. Batteries last about 10 minutes; right-click batteries to refill it.
 - Matches and lighters: click a cold campfire to light it (matches and lighters have limited uses).
@@ -97,7 +96,7 @@ right-click to remove one, C to re-centre.
   together, a side door, loft windows) with a dirt yard and track, a fenced paddock with a gate,
   and a field of dead corn. Barn loot: farm tools (pitchfork, shovel, sickle, shears), duct tape,
   rope, work gloves, jars of preserves. Fences can be jumped; click a gate to open or close it.
-  Crouching in the corn makes you much harder to spot. (Barn furniture uses stand-in sprites.)
+  Crouching in the corn makes you much harder to spot.
 - Farm animals live in farm paddocks only: cows, pigs, chickens, horses and a farm dog (German
   shepherd, border collie or Jack Russell). Each farm keeps its own mix. All are passive and run
   when hit; chickens scatter if you walk right up to them. Dogs are wary of strangers but come over

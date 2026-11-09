@@ -47,6 +47,8 @@ const ICONS = {
   flashlight: ['itemsStore', 0, 1], batteries: ['itemsStore', 1, 1], lighter: ['itemsStore', 2, 1], matches: ['itemsStore', 3, 1],
   pitchfork: ['itemsFarm', 0, 0], shovel: ['itemsFarm', 1, 0], sickle: ['itemsFarm', 2, 0], shears: ['itemsFarm', 3, 0],
   ducttape: ['itemsFarm', 0, 1], rope: ['itemsFarm', 1, 1], gloves: ['itemsFarm', 2, 1], preserves: ['itemsFarm', 3, 1],
+  beef: ['itemsMeat', 0, 0], pork: ['itemsMeat', 1, 0], chickenmeat: ['itemsMeat', 2, 0], bearmeat: ['itemsMeat', 3, 0],
+  moosemeat: ['itemsMeat', 0, 1], venison: ['itemsMeat', 1, 1], rabbitmeat: ['itemsMeat', 2, 1], raccoonmeat: ['itemsMeat', 3, 1],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -1055,6 +1057,8 @@ window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.cli
 // from the hit, accelerating like gravity), bounces slightly as it lands, and lies still while
 // a pool of blood spreads under it. Bodies stay for a while, then fade away.
 const CORPSE_LIFE = 90, CORPSE_FADE = 4, CORPSE_MAX = 40;
+const ANIMAL_CORPSE_LIFE = 600;   // animal carcasses stay 10 minutes so you can come back to butcher them
+const BUTCHER_TIME = 2.5;          // seconds to butcher a carcass the first time
 let corpses = [];
 function addCorpse(z, ang) {
   const c = Math.cos(ang);
@@ -1065,7 +1069,7 @@ function addCorpse(z, ang) {
 }
 function updateCorpses(dt) {
   for (const c of corpses) c.t += dt;
-  corpses = corpses.filter(c => c.t < CORPSE_LIFE + CORPSE_FADE && Math.hypot(c.x - player.x, c.y - player.y) < Z_DESPAWN + 10 * TILE);
+  corpses = corpses.filter(c => c.t < (c.animal ? ANIMAL_CORPSE_LIFE : CORPSE_LIFE) + CORPSE_FADE && Math.hypot(c.x - player.x, c.y - player.y) < Z_DESPAWN + 10 * TILE);
 }
 function corpsePose(t, side) {
   // Returns [rotation in degrees, stagger 0..1].
@@ -1078,7 +1082,8 @@ function renderCorpses(camX, camY) {
   for (const c of corpses) {
     if (c.x < camX - 70 || c.x > camX + BW + 70 || c.y < camY - 70 || c.y > camY + BH + 40) continue;
     const [deg, st] = corpsePose(c.t, c.side);
-    const fade = c.t > CORPSE_LIFE ? 1 - (c.t - CORPSE_LIFE) / CORPSE_FADE : 1;
+    const life = c.animal ? ANIMAL_CORPSE_LIFE : CORPSE_LIFE;
+    const fade = c.t > life ? 1 - (c.t - life) / CORPSE_FADE : 1;
     const bx = c.x + c.kx * st, by = c.y + c.ky * st;
     // Blood pool under the torso, spreading after the body lands.
     if (c.t > 0.6) {
@@ -1649,6 +1654,13 @@ function findNearby() {
       out.push({ type: 'search', b, f, rect, dot: [Math.round((rect[0] + rect[2]) / 2), Math.round((rect[1] + rect[3]) / 2)] });
     }
   }
+  // Animal carcasses: butcher them for meat (and whatever else they carry).
+  if (!pb) for (const c of corpses) {
+    if (!c.animal || !c.items || c.t < 0.7 || Math.hypot(c.x - px, c.y - py) > 90) continue;
+    if (c.butchered && !c.items.some(Boolean)) continue;   // nothing left
+    const r = ANIMAL_TYPES[c.animal].radius + 6;
+    out.push({ type: 'butcher', c, rect: [c.x - r, c.y - 20, c.x + r, c.y + 2], dot: [Math.round(c.x), Math.round(c.y - 12)] });
+  }
   // Farm dogs: feed one to tame it.
   if (!pb && carriesDogFood()) for (const a of animals) {
     if (a.dead || a.tamed || ANIMAL_TYPES[a.sp].kind !== 'dog' || Math.hypot(a.x - px, a.y - py) > 72) continue;
@@ -1685,6 +1697,12 @@ function updateInteract(dt) {
   canvas.style.cursor = hoverIt ? HAND_CURSOR : 'crosshair';
   if (searching) {
     // Keep searching while you stay close; walking off cancels it.
+    if (searching.it.type === 'butcher') {
+      if (!nearby.some(it => it.type === 'butcher' && it.c === searching.it.c)) { searching = null; return; }
+      searching.t += dt;
+      if (searching.t >= BUTCHER_TIME) { const it = searching.it; it.c.butchered = true; searching = null; openCarcass(it); }
+      return;
+    }
     if (!nearby.some(it => it.type === 'search' && it.b.id === searching.it.b.id && it.f.i === searching.it.f.i)) { searching = null; return; }
     searching.t += dt;
     if (searching.t >= SEARCH_TIME) {
@@ -1694,7 +1712,17 @@ function updateInteract(dt) {
     }
   }
 }
+function openCarcass(it) {
+  container = { b: null, f: null, name: ANIMAL_TYPES[it.c.animal].name + ' carcass', items: it.c.items,
+    px: it.c.x, py: it.c.y };
+  if (!invOpen) openInventory(); else layoutInventory();
+}
 function useInteractable(it) {
+  if (it.type === 'butcher') {
+    if (it.c.butchered) openCarcass(it);
+    else { searching = { it, t: 0 }; makeNoise(player.x, player.y, NOISE.search * 0.6, true); }
+    return;
+  }
   if (it.type === 'fire') { lightFire(it.o); return; }
   if (it.type === 'feed') { feedDog(it.a); return; }
   if (it.type === 'gate') {
@@ -1736,7 +1764,7 @@ function renderInteractDots() {
   if (searching) {
     const [x0, y0, x1] = searching.it.rect, w = 22, x = Math.round((x0 + x1) / 2 - w / 2), y = Math.round(y0 - 7);
     bctx.fillStyle = '#000'; bctx.fillRect(x - 1, y - 1, w + 2, 5);
-    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x, y, Math.round(w * Math.min(1, searching.t / SEARCH_TIME)), 3);
+    bctx.fillStyle = '#c8b46a'; bctx.fillRect(x, y, Math.round(w * Math.min(1, searching.t / (searching.it.type === "butcher" ? BUTCHER_TIME : SEARCH_TIME))), 3);
   }
 }
 let HAND_CURSOR = 'pointer';
@@ -2393,7 +2421,7 @@ function itemTags(it) {
   if (def.weapon) out.push('Weapon');
   if (['helmet', 'clothes', 'pants', 'shoes', 'backpack'].includes(def.cat) || def.clothing) out.push('Clothing');
   if (['eat', 'medical', 'antiseptic', 'batteries'].includes(def.use) || it.key === 'matches') out.push('Consumable');
-  if (def.craft || TEARABLE[it.key] || it.key === 'rag') out.push('Craftable');
+  if (def.craft || def.meat || TEARABLE[it.key] || it.key === 'rag') out.push('Craftable');
   if (it.key === 'flashlight' || it.key === 'lighter') out.push('Tool');
   return out.map(t => [t, TAG_COLORS[t]]);
 }
@@ -2559,6 +2587,15 @@ const ITEMS = {
   ducttape:  { name: 'Duct tape', cat: 'misc', abbr: 'TPE', craft: true },
   rope:      { name: 'Rope', cat: 'misc', abbr: 'RPE', craft: true },
   gloves:    { name: 'Work gloves', cat: 'misc', abbr: 'GLV', clothing: true },
+  // Meat from animals. Raw for now (cooking comes later): filling, but it costs some thirst.
+  beef:        { name: 'Raw beef', cat: 'misc', abbr: 'BEF', use: 'eat', food: 22, drink: -4, meat: true },
+  pork:        { name: 'Raw pork', cat: 'misc', abbr: 'PRK', use: 'eat', food: 20, drink: -4, meat: true },
+  chickenmeat: { name: 'Raw chicken', cat: 'misc', abbr: 'CHK', use: 'eat', food: 14, drink: -3, meat: true },
+  bearmeat:    { name: 'Bear meat', cat: 'misc', abbr: 'BRM', use: 'eat', food: 26, drink: -5, meat: true },
+  moosemeat:   { name: 'Moose meat', cat: 'misc', abbr: 'MSM', use: 'eat', food: 24, drink: -4, meat: true },
+  venison:     { name: 'Venison', cat: 'misc', abbr: 'VEN', use: 'eat', food: 20, drink: -3, meat: true },
+  rabbitmeat:  { name: 'Rabbit meat', cat: 'misc', abbr: 'RBT', use: 'eat', food: 12, drink: -2, meat: true },
+  raccoonmeat: { name: 'Raccoon meat', cat: 'misc', abbr: 'RCN', use: 'eat', food: 10, drink: -3, meat: true },
   preserves: { name: 'Jar of preserves', cat: 'misc', abbr: 'JAR', use: 'eat', food: 26, drink: 6 },
   matches:    { name: 'Matches', cat: 'misc', abbr: 'MTC', use: 'fire', uses: 8 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },

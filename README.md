@@ -103,6 +103,10 @@ right-click to remove one, C to re-centre.
   when hit; chickens scatter if you walk right up to them. Dogs are wary of strangers but come over
   if you carry food: click one while carrying peanut butter to feed and tame it, and it follows
   you from then on. Killed farm animals stay dead; a tamed dog is kept in your save.
+- Butchering: click a dead animal to butcher it (a couple of seconds the first time), then take
+  the meat like loot: beef (cow, 4), pork (pig, 3), chicken (1), bear meat (4), moose meat (4),
+  venison (deer, 3), rabbit (1), raccoon (1, plus anything it stole). Carcasses last 10 minutes.
+  Meat is raw for now (cooking later). Dogs and horses give no meat.
 - Inventory tooltips show what an item is under its name: Weapon, Clothing, Consumable, Craftable
   or Tool, each in its own colour.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,

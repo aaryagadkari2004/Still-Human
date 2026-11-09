@@ -30,6 +30,17 @@ const ANIMAL_TYPES = {
   collie:   { name: 'Border collie',      img: 'dogCollie', death: 'dogCollieDeath',   hp: 50, walk: 30, run: 155, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.7, stunMul: 0.7 },
   terrier:  { name: 'Jack Russell terrier', img: 'dogTerrier', death: 'dogTerrierDeath', hp: 35, walk: 30, run: 145, radius: 5, shadow: [7, 2], animRate: 5, kind: 'dog', knockMul: 0.9, stunMul: 0.9 },
 };
+// What each animal's carcass gives when butchered: [item, how many]. Dogs and horses give nothing.
+const MEAT = { cow: ['beef', 4], pig: ['pork', 3], chicken: ['chickenmeat', 1], bear: ['bearmeat', 4], moose: ['moosemeat', 4],
+  deer: ['venison', 3], rabbit: ['rabbitmeat', 1], raccoon: ['raccoonmeat', 1] };
+function carcassItems(a) {
+  const out = [], m = MEAT[a.sp];
+  if (m) for (let i = 0; i < m[1]; i++) out.push(makeItem(m[0]));
+  if (a.loot) out.push(a.loot);   // whatever a raccoon ran off with
+  if (!out.length) return null;
+  while (out.length < 4) out.push(null);
+  return out;
+}
 // Foods a dog will take from you.
 const DOG_FOODS = ['dogfood', 'peanutbutter'];
 const A_CAP = 8;                   // most animals around the player at once
@@ -367,7 +378,7 @@ function killAnimal(a, ang) {
   // Plays the animal's own collapse animation for the way it was facing.
   corpses.push({ animal: a.sp, x: a.x, y: a.y, sheet: IMG[T.death || T.img], noDeathSheet: !T.death, fx: 0,
     fy: T.death ? A_DIR4_ROW[a.dir] : (a.dir === 'W' ? IDLE_ROW.W : IDLE_ROW.E),
-    side: 0, kx: Math.cos(ang) * 3, ky: Math.sin(ang) * 2, t: 0, pool: T.radius * 0.7 + 2, loot: a.loot });
+    side: 0, kx: Math.cos(ang) * 3, ky: Math.sin(ang) * 2, t: 0, pool: T.radius * 0.7 + 2, items: carcassItems(a) });
   if (corpses.length > CORPSE_MAX) corpses.shift();
   for (let i = 0; i < Math.ceil(T.radius / 2); i++) blood.push({ x: a.x + (Math.random() * 2 - 1) * T.radius, y: a.y - 2 + Math.random() * 5, t: performance.now(), s: 3 });
 }

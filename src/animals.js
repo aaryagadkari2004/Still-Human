@@ -39,7 +39,7 @@ function carcassItems(a) {
   if (a.loot) out.push(a.loot);   // whatever a raccoon ran off with
   if (!out.length) return null;
   while (out.length < 4) out.push(null);
-  return out;
+  return compactStacks(out);
 }
 // Foods a dog will take from you.
 const DOG_FOODS = ['dogfood', 'peanutbutter'];
@@ -288,8 +288,7 @@ function behindPlayer() {
 function feedDog(a) {
   const food = carriesDogFood();
   if (!food) { flashMsg('You have nothing a dog would eat'); return; }
-  for (const k in inv.equip) if (inv.equip[k] === food) inv.equip[k] = null;
-  inv.storage = inv.storage.map(i => i === food ? null : i);
+  removeOneOf(food);
   a.tamed = true; a.mode = 'idle'; a.pen = null;
   if (a.farmRef) { const s = bState(a.farmRef); s.tamed = s.tamed || {}; s.tamed[a.fi] = true; }
   flashMsg(`The ${ANIMAL_TYPES[a.sp].name.toLowerCase()} is yours now. It will follow you`);

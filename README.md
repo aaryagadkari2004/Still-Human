@@ -107,6 +107,12 @@ right-click to remove one, C to re-centre.
   the meat like loot: beef (cow, 4), pork (pig, 3), chicken (1), bear meat (4), moose meat (4),
   venison (deer, 3), rabbit (1), raccoon (1, plus anything it stole). Carcasses last 10 minutes.
   Meat is raw for now (cooking later). Dogs and horses give no meat.
+- Stacks: identical items stack up to 3 in one slot (drag one onto another). Shift-drag takes
+  just one off a stack. Weapons don't stack, nor do items with their own state (flashlights,
+  lighters, matches). Equipment slots hold one.
+- Meat goes off: raw meat rots after about one day-night cycle; in a fridge or drinks cooler it
+  keeps about four times longer. The tooltip shows fresh / going off / nearly rotten. Rotten meat
+  still fills you a little but makes you sick (hurts your torso).
 - Inventory tooltips show what an item is under its name: Weapon, Clothing, Consumable, Craftable
   or Tool, each in its own colour.
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,

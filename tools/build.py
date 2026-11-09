@@ -47,6 +47,7 @@ ASSETS = {
     "crops": "crops_v1.png",
     "itemsFarm": "items_farm_v1.png",
     "itemsMeat": "items_meat_v1.png",
+    "itemsMeatRotten": "items_meat_rotten_v1.png",
     "fBed": "furniture/single-bed.png",
     "fDresser": "furniture/dresser.png",
     "fShelf": "furniture/shelving.png",

@@ -49,6 +49,7 @@ const ICONS = {
   ducttape: ['itemsFarm', 0, 1], rope: ['itemsFarm', 1, 1], gloves: ['itemsFarm', 2, 1], preserves: ['itemsFarm', 3, 1],
   beef: ['itemsMeat', 0, 0], pork: ['itemsMeat', 1, 0], chickenmeat: ['itemsMeat', 2, 0], bearmeat: ['itemsMeat', 3, 0],
   moosemeat: ['itemsMeat', 0, 1], venison: ['itemsMeat', 1, 1], rabbitmeat: ['itemsMeat', 2, 1], raccoonmeat: ['itemsMeat', 3, 1],
+  rotten_beef: ['itemsMeatRotten', 0, 0], rotten_pork: ['itemsMeatRotten', 1, 0], rotten_chickenmeat: ['itemsMeatRotten', 2, 0], rotten_bearmeat: ['itemsMeatRotten', 3, 0], rotten_moosemeat: ['itemsMeatRotten', 0, 1], rotten_venison: ['itemsMeatRotten', 1, 1], rotten_rabbitmeat: ['itemsMeatRotten', 2, 1], rotten_raccoonmeat: ['itemsMeatRotten', 3, 1],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -2290,9 +2291,76 @@ function bodyPartAt(px, py) {
   return id ? BODY_PARTS[id - 1] : null;
 }
 // Moving an item: swap with whatever is in the target, if both fit.
-function moveItem(from, to) {
+// ---- Food going off ----
+// Raw meat rots after about a day (one day-night cycle) out in the open; in a fridge or drinks
+// cooler it keeps about four times as long. Rotten meat makes you sick.
+const ROT_TIME = 1320, COLD_RATE = 0.25, COLD_CONTAINERS = ['fridge', 'cooler'];
+function syncCold() {
+  for (const it of carriedItems()) it.cold = false;
+  if (container) { const cold = !!(container.f && COLD_CONTAINERS.includes(containerType(container.f))); for (const it of container.items) if (it) it.cold = cold; }
+}
+let spoilT = 0;
+function updateSpoilage(dt) {
+  spoilT += dt; if (spoilT < 1) return;
+  const step = spoilT; spoilT = 0;
+  const age = (arr, i) => {
+    const it = arr[i]; if (!it) return;
+    const d = ITEMS[it.key]; if (!d || !d.rots) return;
+    it.spoil = (it.spoil || 0) + step * (it.cold ? COLD_RATE : 1);
+    if (it.spoil >= ROT_TIME) arr[i] = { ...makeItem(d.rots), n: it.n, cold: it.cold };
+  };
+  for (const k in inv.equip) { const a = [inv.equip[k]]; age(a, 0); inv.equip[k] = a[0]; }
+  for (let i = 0; i < inv.storage.length; i++) age(inv.storage, i);
+  for (const c of corpses) if (c.items) for (let i = 0; i < c.items.length; i++) age(c.items, i);
+  for (const s of bstate.values()) for (const k in s.c) for (let i = 0; i < s.c[k].length; i++) age(s.c[k], i);
+}
+function freshness(it) {
+  const p = (it.spoil || 0) / ROT_TIME;
+  return p < 0.5 ? 'fresh' : p < 0.8 ? 'going off' : 'nearly rotten';
+}
+// ---- Stacks ----
+// Identical items stack up to 3 in one slot. Weapons don't stack, and neither do things that each
+// have their own state (a flashlight's charge, a lighter's or matchbox's uses).
+const MAX_STACK = 3;
+function stackable(it) { const d = ITEMS[it.key] || it; return !d.weapon && it.key !== 'flashlight' && !d.uses; }
+function canStack(a, b) { return a && b && a !== b && a.key === b.key && stackable(a) && (b.n || 1) < MAX_STACK; }
+function mergeInto(b, a, count) {
+  // Moves up to `count` of stack a onto stack b. Returns how many moved.
+  const moved = Math.min(count, MAX_STACK - (b.n || 1), a.n || 1);
+  b.n = (b.n || 1) + moved; a.n = (a.n || 1) - moved;
+  if (a.spoil != null || b.spoil != null) b.spoil = Math.max(a.spoil || 0, b.spoil || 0);   // a stack is as old as its oldest piece
+  return moved;
+}
+function takeOne(ref) { const it = getItem(ref); if (!it) return; if ((it.n || 1) > 1) it.n--; else setItem(ref, null); }
+function removeOneOf(item) {
+  if ((item.n || 1) > 1) { item.n--; return; }
+  for (const k in inv.equip) if (inv.equip[k] === item) inv.equip[k] = null;
+  inv.storage = inv.storage.map(i => i === item ? null : i);
+}
+// Puts duplicates in a list of items into stacks.
+function compactStacks(items) {
+  for (let i = 0; i < items.length; i++) for (let j = 0; j < i; j++) {
+    if (!items[i] || !canStack(items[i], items[j])) continue;
+    mergeInto(items[j], items[i], items[i].n || 1);
+    if (!(items[i].n > 0)) { items[i] = null; break; }
+  }
+  const kept = items.filter(Boolean);
+  return kept.concat(new Array(items.length - kept.length).fill(null));
+}
+function moveItem(from, to, onlyOne) {
   if (from.kind === to.kind && from.id === to.id && from.i === to.i) return;
   const a = getItem(from), b = getItem(to);
+  if (a && b && canStack(a, b) && to.kind !== 'equip') {
+    mergeInto(b, a, onlyOne ? 1 : a.n || 1);
+    if (!(a.n > 0)) setItem(from, null);
+    syncCold(); return;
+  }
+  // Moving one off a stack (shift-drag), or putting one piece of a stack on (equip slots hold one).
+  if (a && (a.n || 1) > 1 && (onlyOne || to.kind === 'equip')) {
+    if (b) { flashMsg('Put it in an empty slot'); return; }
+    if (!accepts(to, a)) { flashMsg("That doesn't go there"); return; }
+    a.n--; setItem(to, { ...a, n: 1 }); fitStorage(); syncCold(); return;
+  }
   if (!accepts(to, a) || !accepts(from, b)) { flashMsg("That doesn't go there"); return; }
   // Backpacks and pocketed clothes can only come off when the slots they add are empty.
   if (from.kind === 'equip' || to.kind === 'equip') {
@@ -2305,12 +2373,16 @@ function moveItem(from, to) {
     for (let i = nextN; i < curN; i++) if (inv.storage[i] && i !== target) { flashMsg('Empty those slots first'); return; }
   }
   setItem(from, b); setItem(to, a);
-  fitStorage();
+  fitStorage(); syncCold();
 }
 function flashMsg(t) { invMsg = { t, until: performance.now() + 1600 }; }
 // Adds an item to the first free storage slot. Returns false if full.
 function giveItem(item) {
   fitStorage();
+  for (let i = 0; i < storageSize(); i++) if (canStack(item, inv.storage[i])) {
+    mergeInto(inv.storage[i], item, item.n || 1);
+    if (!(item.n > 0)) return true;
+  }
   for (let i = 0; i < storageSize(); i++) if (!inv.storage[i]) { inv.storage[i] = item; return true; }
   return false;
 }
@@ -2359,6 +2431,11 @@ function drawItemIcon(g, item, cx, cy, maxW, maxH) {
     const s = Math.min(1, maxW / img.width, maxH / img.height);
     const w = Math.round(img.width * s), h = Math.round(img.height * s);
     g.drawImage(img, Math.round(cx - w / 2), Math.round(cy - h / 2), w, h);
+    if ((item.n || 1) > 1) {   // stack count in the corner
+      const t = 'x' + item.n, tx = Math.round(cx + maxW / 2 - textWidth(t)), ty = Math.round(cy + maxH / 2 - 6);
+      g.fillStyle = 'rgba(8,12,12,0.75)'; g.fillRect(tx - 1, ty - 1, textWidth(t) + 2, 7);
+      pixelText(g, t, tx, ty, UI_TEXT);
+    }
   } else {
     // Placeholder until the item has art.
     g.fillStyle = '#2c3a37'; g.fillRect(cx - 13, cy - 8, 26, 16);
@@ -2437,6 +2514,7 @@ function itemLabel(it) {
   if (def.cat === 'backpack') return `${def.name} - +${def.slots} slots`;
   if (it.key === 'flashlight') return `${def.name} - ${Math.ceil(it.charge)}%${it.on ? ' (on)' : ''}`;
   if (def.uses) return `${def.name} - ${it.left} left`;
+  if (def.rots) return `${def.name} - ${freshness(it)}${it.cold ? ' (cold)' : ''}`;
   if (def.weapon && WEAPONS[def.weapon]) return def.name;
   return def.name;
 }
@@ -2537,7 +2615,7 @@ window.addEventListener('mouseup', e => {
   const [x, y] = invPoint(e), to = anySlotAt(x, y);
   const part = bodyPartAt(x - invOX(), y);
   if (part && invDrag.item.use === 'medical') { useItem(invDrag.from, part); }   // drop a medical item on a body part to treat it
-  else if (to) moveItem(invDrag.from, to);
+  else if (to) moveItem(invDrag.from, to, e.shiftKey);   // shift-drag moves just one off a stack
   invDrag = null;
 });
 invCanvas.addEventListener('contextmenu', e => {
@@ -2588,14 +2666,23 @@ const ITEMS = {
   rope:      { name: 'Rope', cat: 'misc', abbr: 'RPE', craft: true },
   gloves:    { name: 'Work gloves', cat: 'misc', abbr: 'GLV', clothing: true },
   // Meat from animals. Raw for now (cooking comes later): filling, but it costs some thirst.
-  beef:        { name: 'Raw beef', cat: 'misc', abbr: 'BEF', use: 'eat', food: 22, drink: -4, meat: true },
-  pork:        { name: 'Raw pork', cat: 'misc', abbr: 'PRK', use: 'eat', food: 20, drink: -4, meat: true },
-  chickenmeat: { name: 'Raw chicken', cat: 'misc', abbr: 'CHK', use: 'eat', food: 14, drink: -3, meat: true },
-  bearmeat:    { name: 'Bear meat', cat: 'misc', abbr: 'BRM', use: 'eat', food: 26, drink: -5, meat: true },
-  moosemeat:   { name: 'Moose meat', cat: 'misc', abbr: 'MSM', use: 'eat', food: 24, drink: -4, meat: true },
-  venison:     { name: 'Venison', cat: 'misc', abbr: 'VEN', use: 'eat', food: 20, drink: -3, meat: true },
-  rabbitmeat:  { name: 'Rabbit meat', cat: 'misc', abbr: 'RBT', use: 'eat', food: 12, drink: -2, meat: true },
-  raccoonmeat: { name: 'Raccoon meat', cat: 'misc', abbr: 'RCN', use: 'eat', food: 10, drink: -3, meat: true },
+  beef:        { name: 'Raw beef', cat: 'misc', abbr: 'BEF', use: 'eat', food: 22, drink: -4, meat: true, rots: 'rotten_beef' },
+  pork:        { name: 'Raw pork', cat: 'misc', abbr: 'PRK', use: 'eat', food: 20, drink: -4, meat: true, rots: 'rotten_pork' },
+  chickenmeat: { name: 'Raw chicken', cat: 'misc', abbr: 'CHK', use: 'eat', food: 14, drink: -3, meat: true, rots: 'rotten_chickenmeat' },
+  bearmeat:    { name: 'Bear meat', cat: 'misc', abbr: 'BRM', use: 'eat', food: 26, drink: -5, meat: true, rots: 'rotten_bearmeat' },
+  moosemeat:   { name: 'Moose meat', cat: 'misc', abbr: 'MSM', use: 'eat', food: 24, drink: -4, meat: true, rots: 'rotten_moosemeat' },
+  venison:     { name: 'Venison', cat: 'misc', abbr: 'VEN', use: 'eat', food: 20, drink: -3, meat: true, rots: 'rotten_venison' },
+  rabbitmeat:  { name: 'Rabbit meat', cat: 'misc', abbr: 'RBT', use: 'eat', food: 12, drink: -2, meat: true, rots: 'rotten_rabbitmeat' },
+  raccoonmeat: { name: 'Raccoon meat', cat: 'misc', abbr: 'RCN', use: 'eat', food: 10, drink: -3, meat: true, rots: 'rotten_raccoonmeat' },
+  // Meat that has gone off. Eating it makes you sick.
+  rotten_beef: { name: 'Rotten beef', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_pork: { name: 'Rotten pork', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_chickenmeat: { name: 'Rotten chicken', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_bearmeat: { name: 'Rotten bear meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_moosemeat: { name: 'Rotten moose meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_venison: { name: 'Rotten venison', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_rabbitmeat: { name: 'Rotten rabbit meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
+  rotten_raccoonmeat: { name: 'Rotten raccoon meat', cat: 'misc', abbr: 'ROT', use: 'eat', food: 4, drink: -4, sick: 12 },
   preserves: { name: 'Jar of preserves', cat: 'misc', abbr: 'JAR', use: 'eat', food: 26, drink: 6 },
   matches:    { name: 'Matches', cat: 'misc', abbr: 'MTC', use: 'fire', uses: 8 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
@@ -2671,7 +2758,9 @@ function rollLoot(b, f) {
   const mult = b.cond === 'looted' ? 0.25 : b.cond === 'locked' ? 1.3 : 1;
   let n = 0;
   C.loot.forEach(([key, chance], k) => { if (n < C.slots && hash01(b.seed, f.i * 31 + k, 0x10a7) < chance * mult) items[n++] = makeItem(key); });
-  return items;
+  const cold = COLD_CONTAINERS.includes(containerType(f));
+  for (const it of items) if (it) it.cold = cold;
+  return compactStacks(items);
 }
 let container = null;   // { b, f, name, items }
 function openContainer(it) {
@@ -2733,28 +2822,29 @@ function lightFire(o) {
 function useItem(ref, part) {
   const item = getItem(ref); if (!item) return;
   if (item.use === 'medical') {
-    if (treat(item, part)) setItem(ref, null);
+    if (treat(item, part)) takeOne(ref);
   } else if (item.use === 'flashlight') {
     toggleFlashlight(item);
   } else if (item.use === 'batteries') {
     const fl = carriedItems().filter(i => i.key === 'flashlight').sort((a, b) => a.charge - b.charge)[0];
     if (!fl) flashMsg('No flashlight to put them in');
     else if (fl.charge >= 100) flashMsg('The flashlight is already full');
-    else { fl.charge = 100; setItem(ref, null); flashMsg('Put new batteries in the flashlight'); }
+    else { fl.charge = 100; takeOne(ref); flashMsg('Put new batteries in the flashlight'); }
   } else if (item.use === 'fire') {
     flashMsg('Click a cold campfire to light it');
   } else if (item.use === 'antiseptic') {
     flashMsg('Nothing to disinfect yet');
   } else if (TEARABLE[item.key] && ref.kind !== 'equip') {
-    setItem(ref, makeItem('rag'));
-    for (let i = 1; i < TEARABLE[item.key]; i++) if (!giveItem(makeItem('rag'))) break;
+    takeOne(ref);
+    for (let i = 0; i < TEARABLE[item.key]; i++) if (!giveItem(makeItem('rag'))) break;
     flashMsg('Tore ' + item.name.toLowerCase() + ' into rags');
   } else if (item.use === 'eat') {
     const def = ITEMS[item.key] || item;
     player.hunger = Math.max(0, Math.min(100, player.hunger + (def.food || 0)));
     player.thirst = Math.max(0, Math.min(100, player.thirst + (def.drink || 0)));
-    setItem(ref, null);
-    flashMsg((def.food >= def.drink ? 'Ate ' : 'Drank ') + def.name.toLowerCase());
+    takeOne(ref);
+    if (def.sick) { player.parts.torso = Math.max(1, player.parts.torso - def.sick); flashMsg('That was rotten. You feel sick'); }
+    else flashMsg((def.food >= def.drink ? 'Ate ' : 'Drank ') + def.name.toLowerCase());
   } else flashMsg("Can't use that");
 }
 
@@ -2939,7 +3029,7 @@ function loop(now) {
       checkResidents();
       updateBanging(dt);
       if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
-      playTime += dt; clock += dt; updateWeather(dt); updateFlashlight(dt);
+      playTime += dt; clock += dt; updateWeather(dt); updateFlashlight(dt); updateSpoilage(dt);
       updateZombies(dt);
       updateAnimals(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }

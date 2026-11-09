@@ -43,6 +43,8 @@ const ICONS = {
   // Backpack icons: the back-facing frame of the worn sprite.
   bagS: ['wearBagS', 0, 5, 2, 64], bagM: ['wearBagM', 0, 5, 2, 64], bagL: ['wearBagL', 0, 5, 2, 64],
   hoodie: ['wearHoodie', 0, 0, 1, 64], leatherjacket: ['wearLeather', 0, 0, 1, 64], wintercoat: ['wearCoat', 0, 0, 1, 64], utilityvest: ['wearVest', 0, 0, 1, 64],
+  candy: ['itemsStore', 0, 0], energy: ['itemsStore', 1, 0], peaches: ['itemsStore', 2, 0], peanutbutter: ['itemsStore', 3, 0],
+  flashlight: ['itemsStore', 0, 1], batteries: ['itemsStore', 1, 1], lighter: ['itemsStore', 2, 1], matches: ['itemsStore', 3, 1],
   rag: ['itemsMed', 0, 0], bandage: ['itemsMed', 1, 0], firstaid: ['itemsMed', 0, 1], antiseptic: ['itemsMed', 1, 1],
   bat: ['itemsMelee', 0, 1, 2], crowbar: ['itemsMelee', 1, 1, 2], pan: ['itemsMelee', 2, 1, 2], rollingpin: ['itemsMelee', 3, 1, 2],
 };
@@ -62,6 +64,8 @@ function iconFor(key) {
   return (iconCache[key] = out);
 }
 function prepareAssets() {
+  // Stockroom boxes: the medium camp crate, until store furniture art arrives.
+  { const c = document.createElement('canvas'); c.width = 24; c.height = 20; c.getContext('2d').drawImage(IMG.camp, 148, 38, 24, 20, 0, 0, 24, 20); IMG.fBoxes = c; }
   // Tents are drawn a little larger than on the camp sheet (1.25x, nearest-neighbour).
   { const c = document.createElement('canvas'); c.width = 60; c.height = 45; const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
     g.drawImage(IMG.camp, 8, 22, 48, 36, 0, 0, 60, 45); IMG.campTent = c; }
@@ -1059,6 +1063,10 @@ function renderCorpses(camX, camY) {
 // Placement and floor plans live in buildings_world.js; this part makes them playable.
 const WALL_H = 48, WALL_CUT = 14, ROOF_OH = 6;
 const EXT_SHEETS = ['cabLogs', 'cabRed', 'cabDark'];
+// Each kind of building has its own wall, interior and floor sheets (all in the same layouts).
+function extSheet(b) { return b.kind === 'store' ? IMG.storeExt : IMG[EXT_SHEETS[b.mat]]; }
+function intWallSheet(b) { return b.kind === 'store' ? IMG.storeIntWall : IMG.intWall; }
+function floorSheet(b) { return b.kind === 'store' ? IMG.floorStore : IMG.floorWood; }
 const OPEN_HP = { door: 100, window: 60, boarded: 140 };
 const BANG_RATE = 4;            // damage per second per zombie, only when 3+ are hitting the same door/window
 const BANG_MIN = 3;
@@ -1279,7 +1287,7 @@ function gradient(g, x, y, w, h, a0, a1, color = '0,0,0') {
 }
 // Exterior: ground shadow + front wall (with its doors and windows) + roof. Cached per house.
 function buildExterior(b) {
-  const L = layoutBuilding(b), l = bLines(b), sheet = IMG[EXT_SHEETS[b.mat]];
+  const L = layoutBuilding(b), l = bLines(b), sheet = extSheet(b);
   const base = l.B + 4, faceL = l.L - 4, faceR = l.R + 4, faceW = faceR - faceL;
   const pad = 40, x0 = faceL - pad, y0 = l.T - 4 - WALL_H - ROOF_OH - pad;
   const c = document.createElement('canvas'); c.width = faceW + pad * 2 + 24; c.height = base - y0 + pad;
@@ -1301,6 +1309,14 @@ function buildExterior(b) {
       const i = south.get(tx), o = L.openings[i], st = openingState(b, i);
       sy = 48;
       sx = o.kind === 'door' ? (st === 'closed' ? 0 : st === 'open' ? 32 : 64) : (st === 'intact' ? 96 : st === 'broken' ? 128 : 160);
+      // Storefront: while both halves are intact, the pair is drawn as one wide shop window.
+      if (o.shop && st === 'intact') {
+        const j = south.get(o.shop === 'L' ? tx + 1 : tx - 1);
+        if (j !== undefined && openingState(b, j) === 'intact') {
+          g.drawImage(IMG.storeFront, o.shop === 'L' ? 0 : 32, 0, 32, 48, X(px), Y(base - 48), 32, 48);
+          continue;
+        }
+      }
     }
     const cl = Math.max(px, faceL), cr = Math.min(px + 32, faceR);
     if (cr <= cl) continue;
@@ -1313,10 +1329,23 @@ function buildExterior(b) {
   b._gfx = { ext: c, x0, y0, roof: buildRoof(b), base };
 }
 function buildRoof(b) {
-  const l = bLines(b), sheet = IMG[EXT_SHEETS[b.mat]];
+  const l = bLines(b), sheet = extSheet(b);
   const rx = l.L - 4 - ROOF_OH, ry = l.T - 4 - WALL_H - ROOF_OH;
   const rw = (l.R + 4 + ROOF_OH) - rx, rh = (l.B + 4 - WALL_H + 3) - ry;
   const c = sliceRoof(sheet, rw, rh), g = c.getContext('2d');
+  if (b.kind === 'store') {
+    // Flat roof: an even surface with a low parapet lip around the edge.
+    gradient(g, 0, 0, rw, rh, 0.06, 0.16);
+    g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, 0, rw, 2); g.fillRect(0, 0, 2, rh);
+    g.fillStyle = '#26272a'; g.fillRect(0, rh - 4, rw, 3); g.fillStyle = '#0e0f11'; g.fillRect(0, rh - 1, rw, 1);
+    g.fillRect(rw - 1, 0, 1, rh);
+    // A rooftop vent unit.
+    const vx = Math.round(rw * 0.68), vy = Math.round(rh * 0.3);
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(vx + 3, vy + 3, 18, 14);
+    g.fillStyle = '#7a7d80'; g.fillRect(vx, vy, 18, 12); g.fillStyle = '#5c5f62'; g.fillRect(vx, vy + 9, 18, 3);
+    g.fillStyle = '#45484b'; for (let i = 2; i < 17; i += 3) g.fillRect(vx + i, vy + 2, 1, 6);
+    return { c, x: rx, y: ry };
+  }
   // Two slopes: the back one is darker and shorter; the front one catches more light.
   const split = Math.round(rh * 0.4);
   g.fillStyle = 'rgba(0,0,0,0.24)'; g.fillRect(0, 0, rw, split);
@@ -1343,7 +1372,7 @@ function buildFloor(b) {
   const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
   for (let ty = 0; ty < L.H; ty++) for (let tx = 0; tx < L.W; tx++) {
     const k = hashInt(b.x + tx, b.y + ty, 0x71) % 3;
-    g.drawImage(IMG.floorWood, k * 32, 0, 32, 32, (b.x + tx) * TILE - l.L, (b.y + ty) * TILE - l.T, 32, 32);
+    g.drawImage(floorSheet(b), k * 32, 0, 32, 32, (b.x + tx) * TILE - l.L, (b.y + ty) * TILE - l.T, 32, 32);
   }
   // Room edges a little darker.
   for (let i = 0; i < 16; i++) { g.strokeStyle = `rgba(8,8,8,${0.28 * (1 - i / 16)})`; g.strokeRect(i + 0.5, i + 0.5, c.width - 2 * i - 1, c.height - 2 * i - 1); }
@@ -1382,13 +1411,13 @@ function drawWallTile(b, tx, ty, cut) {
     let sx = 32 + ((tx + ty) % 2) * 32, sy = 0;
     if (o) { sy = 48; sx = o.kind === 'door' ? (st === 'closed' ? 0 : st === 'open' ? 32 : 64) : (st === 'intact' ? 96 : st === 'broken' ? 128 : 160); }
     const xa = w ? px : cx - 4, xb = e ? px + 32 : cx + 4;
-    bctx.drawImage(IMG.intWall, sx + (xa - px), sy + 48 - h, xb - xa, h, xa + shake, base - h, xb - xa, h);
+    bctx.drawImage(intWallSheet(b), sx + (xa - px), sy + 48 - h, xb - xa, h, xa + shake, base - h, xb - xa, h);
     if (ty !== 0) { bctx.fillStyle = 'rgba(0,0,0,0.1)'; bctx.fillRect(xa, base - h, xb - xa, h); }
     for (let i = 0; i < Math.min(h, 24); i++) { bctx.fillStyle = `rgba(0,0,0,${0.3 * (i / 24) ** 2})`; bctx.fillRect(xa, base - Math.min(h, 24) + i, xb - xa, 1); }
-    if (!w) bctx.drawImage(IMG.intWall, 0, 48 - h, 5, h, cx - 4, base - h, 5, h);
-    if (!e) bctx.drawImage(IMG.intWall, 123, 48 - h, 5, h, cx - 1, base - h, 5, h);
+    if (!w) bctx.drawImage(intWallSheet(b), 0, 48 - h, 5, h, cx - 4, base - h, 5, h);
+    if (!e) bctx.drawImage(intWallSheet(b), 123, 48 - h, 5, h, cx - 1, base - h, 5, h);
   } else if (!s) {
-    bctx.drawImage(IMG.intWall, 42, 48 - h, 8, h, cx - 4, base - h, 8, h);
+    bctx.drawImage(intWallSheet(b), 42, 48 - h, 8, h, cx - 4, base - h, 8, h);
     bctx.fillStyle = 'rgba(0,0,0,0.25)'; bctx.fillRect(cx - 4, base - h, 8, h);
   }
   // Top of the wall.
@@ -1534,7 +1563,12 @@ function findNearby() {
   }
   // Crates at camps (only from outside).
   if (!pb) for (const o of objectsIn(px - 96, py - 96, px + 96, py + 96)) {
-    const k = KINDS[o.k]; if (!k.crate || !o.camp) continue;
+    const k = KINDS[o.k];
+    if (k.fire && o.camp && !fireLit(o)) {   // a cold campfire can be lit
+      out.push({ type: 'fire', o, rect: [o.x - 14, o.y - 14, o.x + 14, o.y + 2], dot: [Math.round(o.x), Math.round(o.y - 8)] });
+      continue;
+    }
+    if (!k.crate || !o.camp) continue;
     const rect = [o.x - k.ax, o.y - k.ay, o.x - k.ax + k.sw, o.y - k.ay + k.sh];
     out.push({ type: 'search', b: o.camp, f: { i: o.ci, name: k.crate, crate: true }, rect, dot: [Math.round(o.x), Math.round(o.y - k.ay + k.sh / 2)] });
   }
@@ -1564,6 +1598,7 @@ function updateInteract(dt) {
   }
 }
 function useInteractable(it) {
+  if (it.type === 'fire') { lightFire(it.o); return; }
   if (it.type === 'door') {
     const st = openingState(it.b, it.i);
     const [cx, cy] = openingCenter(it.b, layoutBuilding(it.b).openings[it.i]);
@@ -1779,7 +1814,7 @@ function renderWorld(camX, camY, withPlayer) {
         rectsHit(pbx0, pby0, pbx0 + 22, player.y, sx + 4, sy, sx + k.sw - 4, o.y - k.ch)) fade = true;
     if (fade) bctx.globalAlpha = 0.45;
     bctx.drawImage(k.img ? IMG[k.img] : IMG.objects, k.sx, k.sy, k.sw, k.sh, sx, sy, k.sw, k.sh);
-    if (k.fire && o.lit) {
+    if (k.fire && fireLit(o)) {
       // Smoke then flame, at the same origin as the fire ring. They loop on their own clocks:
       // the flame flickers quickly while the smoke drifts slowly.
       const smoke = (Math.floor(frameTime / 260) + o.ph) % 4, flame = (Math.floor(frameTime / 110) + o.ph) % 4;
@@ -2243,6 +2278,8 @@ function itemLabel(it) {
     return `${def.name} - ${parts.join(' ')}`;
   }
   if (def.cat === 'backpack') return `${def.name} - +${def.slots} slots`;
+  if (it.key === 'flashlight') return `${def.name} - ${Math.ceil(it.charge)}%${it.on ? ' (on)' : ''}`;
+  if (def.uses) return `${def.name} - ${it.left} left`;
   if (def.weapon && WEAPONS[def.weapon]) return def.name;
   return def.name;
 }
@@ -2363,6 +2400,15 @@ const ITEMS = {
   water:    { name: 'Water bottle', cat: 'misc', abbr: 'H2O', use: 'eat', food: 0, drink: 38 },
   soda:     { name: 'Soda', cat: 'misc', abbr: 'POP', use: 'eat', food: 4, drink: 20 },
   juice:    { name: 'Juice carton', cat: 'misc', abbr: 'JUC', use: 'eat', food: 6, drink: 26 },
+  candy:    { name: 'Candy bar', cat: 'misc', abbr: 'CND', use: 'eat', food: 14, drink: -2 },
+  energy:   { name: 'Energy drink', cat: 'misc', abbr: 'NRG', use: 'eat', food: 4, drink: 22 },
+  peaches:  { name: 'Canned peaches', cat: 'misc', abbr: 'PCH', use: 'eat', food: 18, drink: 10 },
+  peanutbutter: { name: 'Peanut butter', cat: 'misc', abbr: 'PNB', use: 'eat', food: 34, drink: -6 },
+  // Tools. The flashlight runs on batteries (charge %); lighters and matches light campfires.
+  flashlight: { name: 'Flashlight', cat: 'misc', abbr: 'FLS', use: 'flashlight' },
+  batteries:  { name: 'Batteries', cat: 'misc', abbr: 'BAT', use: 'batteries' },
+  lighter:    { name: 'Lighter', cat: 'misc', abbr: 'LTR', use: 'fire', uses: 30 },
+  matches:    { name: 'Matches', cat: 'misc', abbr: 'MTC', use: 'fire', uses: 8 },
   knife:    { name: 'Kitchen knife', cat: 'weapon', abbr: 'KNF', weapon: 'knife' },
   hatchet:  { name: 'Hatchet', cat: 'weapon', abbr: 'HAT', weapon: 'hatchet' },
   axe:      { name: 'Axe', cat: 'weapon', abbr: 'AXE', weapon: 'axe' },
@@ -2386,16 +2432,27 @@ const ITEMS = {
   bagM:     { name: 'Medium backpack', cat: 'backpack', abbr: 'BG6', slots: 6, wear: 'wearBagM' },
   bagL:     { name: 'Large backpack', cat: 'backpack', abbr: 'B12', slots: 12, wear: 'wearBagL' },
 };
-function makeItem(key) { return { key, ...ITEMS[key] }; }
+function makeItem(key) {
+  const it = { key, ...ITEMS[key] };
+  if (key === 'flashlight') { it.charge = 20 + Math.floor(Math.random() * 81); it.on = false; }
+  if (ITEMS[key].uses) it.left = 1 + Math.floor(Math.random() * ITEMS[key].uses);
+  return it;
+}
 // Each container rolls every line once: [item, chance]. Most finds are small.
 const CONTAINERS = {
   fridge:  { name: 'Fridge', slots: 4, loot: [['water', 0.3], ['soda', 0.3], ['juice', 0.2], ['bread', 0.15]] },
   counter: { name: 'Kitchen counter', slots: 6, loot: [['beans', 0.35], ['soup', 0.25], ['chips', 0.2], ['bread', 0.12], ['knife', 0.18], ['pan', 0.1], ['rollingpin', 0.08], ['rag', 0.1], ['bandage', 0.08], ['antiseptic', 0.05], ['water', 0.15]] },
   dresser: { name: 'Dresser', slots: 6, loot: [['bat', 0.05], ['hoodie', 0.15], ['wintercoat', 0.07], ['leatherjacket', 0.035], ['utilityvest', 0.04], ['beanie', 0.12], ['bikehelmet', 0.04], ['motohelmet', 0.012], ['bagS', 0.07], ['rag', 0.25]] },
+  // General store. Shelves: groceries and a few household supplies; coolers: drinks; the checkout:
+  // small things kept by the register; stockroom boxes: bulk stock.
+  storeShelf: { name: 'Store shelf', slots: 4, loot: [['beans', 0.3], ['soup', 0.25], ['peaches', 0.25], ['peanutbutter', 0.18], ['chips', 0.3], ['candy', 0.3], ['bread', 0.1], ['rag', 0.08], ['bandage', 0.06], ['batteries', 0.12], ['flashlight', 0.05], ['matches', 0.1]] },
+  cooler:     { name: 'Drinks cooler', slots: 4, loot: [['water', 0.45], ['soda', 0.45], ['juice', 0.25], ['energy', 0.35], ['water', 0.2]] },
+  checkout:   { name: 'Checkout counter', slots: 3, loot: [['candy', 0.3], ['lighter', 0.25], ['matches', 0.2], ['batteries', 0.15], ['energy', 0.1]] },
+  stockroom:  { name: 'Boxes', slots: 4, loot: [['beans', 0.4], ['water', 0.4], ['soup', 0.3], ['peaches', 0.3], ['chips', 0.3], ['batteries', 0.2], ['flashlight', 0.1], ['rag', 0.15]] },
   // Camp crates: canned food, water and camping gear. Bigger crates hold more and better.
   crateS:  { name: 'Small crate', slots: 2, loot: [['beans', 0.35], ['water', 0.3], ['chips', 0.2], ['rag', 0.25], ['bandage', 0.1], ['knife', 0.08]] },
-  crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05]] },
-  crateL:  { name: 'Large crate', slots: 6, loot: [['beans', 0.45], ['soup', 0.35], ['water', 0.5], ['water', 0.25], ['bandage', 0.2], ['firstaid', 0.06], ['antiseptic', 0.08], ['hatchet', 0.14], ['axe', 0.06], ['wintercoat', 0.08], ['beanie', 0.1], ['utilityvest', 0.05], ['bagM', 0.06], ['bagL', 0.02]] },
+  crateM:  { name: 'Crate', slots: 4, loot: [['beans', 0.4], ['soup', 0.3], ['water', 0.4], ['rag', 0.25], ['bandage', 0.15], ['antiseptic', 0.06], ['knife', 0.1], ['hatchet', 0.1], ['beanie', 0.1], ['hoodie', 0.06], ['bagS', 0.05], ['matches', 0.2], ['flashlight', 0.06]] },
+  crateL:  { name: 'Large crate', slots: 6, loot: [['beans', 0.45], ['soup', 0.35], ['water', 0.5], ['water', 0.25], ['bandage', 0.2], ['firstaid', 0.06], ['antiseptic', 0.08], ['hatchet', 0.14], ['axe', 0.06], ['wintercoat', 0.08], ['beanie', 0.1], ['utilityvest', 0.05], ['bagM', 0.06], ['bagL', 0.02], ['lighter', 0.15], ['flashlight', 0.1], ['batteries', 0.12]] },
   shelf:   { name: 'Shelves', slots: 4, loot: [['rag', 0.15], ['bandage', 0.18], ['firstaid', 0.04], ['antiseptic', 0.08], ['beans', 0.2], ['soup', 0.12], ['chips', 0.12], ['hatchet', 0.06], ['crowbar', 0.05], ['pipe', 0.05], ['axe', 0.025], ['utilityvest', 0.04], ['hardhat', 0.04], ['militaryhelmet', 0.008], ['bagM', 0.04], ['bagL', 0.015]] },
 };
 // Melee weapons. reach in px (fists are 30), arc = half-width of the swing in degrees,
@@ -2444,10 +2501,50 @@ function treat(item, part) {
 }
 // Clothes can be torn into rags.
 const TEARABLE = { hoodie: 2, beanie: 1, wintercoat: 3 };
+// Everything the player is carrying (worn, in hand and in storage).
+function carriedItems() { return [...Object.values(inv.equip), ...inv.storage].filter(Boolean); }
+// ---- Flashlight ----
+const FLASH_DRAIN = 100 / 600;   // % per second: a full set of batteries lasts about 10 minutes
+function toggleFlashlight(fl) {
+  if (!fl.on && fl.charge <= 0) { flashMsg('The flashlight is dead. It needs batteries'); return; }
+  for (const i of carriedItems()) if (i.key === 'flashlight' && i !== fl) i.on = false;
+  fl.on = !fl.on; toast(fl.on ? 'Flashlight on' : 'Flashlight off');
+}
+function activeFlashlight() { return carriedItems().find(i => i.key === 'flashlight' && i.on && i.charge > 0); }
+function updateFlashlight(dt) {
+  const fl = carriedItems().find(i => i.key === 'flashlight' && i.on);
+  if (!fl) return;
+  fl.charge = Math.max(0, fl.charge - FLASH_DRAIN * dt);
+  if (fl.charge <= 0) { fl.on = false; toast('The flashlight died'); }
+}
+// ---- Campfires ----
+// Lit state: generated with the camp, then changed by the player (kept in the camp's saved state).
+function fireLit(o) { const s = bstate.get(o.camp.id); return s && s.fire != null ? s.fire : o.lit; }
+function lightFire(o) {
+  const tool = carriedItems().filter(i => ITEMS[i.key] && ITEMS[i.key].use === 'fire').sort((a, b) => (a.key === 'matches' ? -1 : 1))[0];
+  if (!tool) { flashMsg('You need matches or a lighter'); return; }
+  bState(o.camp).fire = true;
+  tool.left--;
+  if (tool.left <= 0) {
+    for (const k in inv.equip) if (inv.equip[k] === tool) inv.equip[k] = null;
+    inv.storage = inv.storage.map(i => i === tool ? null : i);
+    flashMsg(tool.key === 'matches' ? 'Lit the fire with your last match' : 'Lit the fire. The lighter is empty');
+  } else flashMsg('Lit the campfire');
+  if (invOpen) layoutInventory();
+}
 function useItem(ref, part) {
   const item = getItem(ref); if (!item) return;
   if (item.use === 'medical') {
     if (treat(item, part)) setItem(ref, null);
+  } else if (item.use === 'flashlight') {
+    toggleFlashlight(item);
+  } else if (item.use === 'batteries') {
+    const fl = carriedItems().filter(i => i.key === 'flashlight').sort((a, b) => a.charge - b.charge)[0];
+    if (!fl) flashMsg('No flashlight to put them in');
+    else if (fl.charge >= 100) flashMsg('The flashlight is already full');
+    else { fl.charge = 100; setItem(ref, null); flashMsg('Put new batteries in the flashlight'); }
+  } else if (item.use === 'fire') {
+    flashMsg('Click a cold campfire to light it');
   } else if (item.use === 'antiseptic') {
     flashMsg('Nothing to disinfect yet');
   } else if (TEARABLE[item.key] && ref.kind !== 'equip') {
@@ -2536,6 +2633,7 @@ function onKeyPress(k) {
     else if (k === 'i' || k === 'tab') openInventory();
     else if (k === 'x') { const e = inv.equip; [e.primary, e.secondary] = [e.secondary, e.primary]; toast(e.primary ? e.primary.name : 'Fists'); }
     else if (k === 'm') openMap();
+    else if (k === 'f') { const fl = carriedItems().find(i => i.key === 'flashlight' && i.on) || carriedItems().find(i => i.key === 'flashlight' && i.charge > 0) || carriedItems().find(i => i.key === 'flashlight'); if (fl) toggleFlashlight(fl); else toast('No flashlight'); }
     else if (k === 'f3') ui.debug.classList.toggle('hidden');
   } else if (state === 'pause') {
     if (k === 'escape') resume();
@@ -2643,7 +2741,7 @@ function loop(now) {
       checkResidents();
       updateBanging(dt);
       if (container && Math.hypot(player.x - container.px, player.y - container.py) > 72) closeContainer();
-      playTime += dt; clock += dt; updateWeather(dt);
+      playTime += dt; clock += dt; updateWeather(dt); updateFlashlight(dt);
       updateZombies(dt);
       updateAnimals(dt);
       if (state === 'play' || state === 'map') { updateBleeding(dt); updateNeeds(dt); }

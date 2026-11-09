@@ -86,6 +86,13 @@ right-click to remove one, C to re-centre.
     something from inside.
   - All of them can be killed: each plays its own collapse animation and leaves a body (hunting and
     drops are coming later). Bears and moose have their own attack animations.
+- General stores: every hamlet has one brick store facing the road, with wide shop windows, a
+  glass door and a flat roof. Inside: shelf aisles (groceries, candy, batteries, matches...),
+  drinks coolers, a checkout counter (lighters, matches, candy) and a stockroom of boxes.
+  (Store furniture uses stand-in sprites until its art is made.)
+- Flashlight: press F (or right-click it) to switch it on; it lights a cone toward the mouse at
+  night. Batteries last about 10 minutes; right-click batteries to refill it.
+- Matches and lighters: click a cold campfire to light it (matches and lighters have limited uses).
 - Camps: abandoned campsites deep in thick forest, with a tent, a campfire (usually still burning,
   with flickering flame and drifting smoke) and none, one or a few crates (small, medium, large)
   holding canned food, water, medical supplies and camping gear. Click a crate to search it.

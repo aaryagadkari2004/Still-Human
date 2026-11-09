@@ -19,11 +19,18 @@ const FURN = {
   counter: { img: 'fCounter', w: 2, h: 1, container: 'counter' },
   table:   { img: 'fTable',   w: 2, h: 1 },
   chair:   { img: 'fChair',   w: 1, h: 1 },
+  // General store. Until the store furniture art arrives these borrow existing sprites.
+  rack:     { img: 'fShelf',   w: 1, h: 1, container: 'storeShelf' },
+  cooler:   { img: 'fFridge',  w: 1, h: 1, container: 'cooler' },
+  checkout: { img: 'fTable',   w: 2, h: 1, container: 'checkout' },
+  boxes:    { img: 'fBoxes',   w: 1, h: 1, container: 'stockroom' },
 };
 
 // Floor plans. # wall, . floor, D outside door, d inside door, W window.
 // Front doors are on the south (bottom) wall so they can be seen from outside.
 // f: furniture [name, x, y] (top-left of its footprint). z: spots a resident zombie may stand.
+// Grid legend: # wall, . floor, D outside door, d inside door, W window,
+// S storefront window (pairs of S are drawn as one wide shop window; each tile works like a window).
 const TEMPLATES = [
   { name: 'cabin', grid: [
       '##W##W##',
@@ -68,6 +75,23 @@ const TEMPLATES = [
     f: [['bed', 1, 1], ['dresser', 2, 1], ['bed', 1, 4], ['fridge', 6, 1], ['stove', 7, 1], ['counter', 9, 1], ['shelf', 10, 3],
         ['table', 7, 4], ['chair', 6, 4], ['chair', 9, 4]],
     z: [[2, 4], [8, 3]] },
+  // General store: sales floor with shelf aisles and drinks coolers, checkout by the door,
+  // stockroom in the back corner. Only ever placed in hamlets (never picked as a house).
+  { name: 'store', kind: 'store', grid: [
+      '############',
+      '#.......#..#',
+      '#.......d..#',
+      '#.......#..#',
+      '#.......####',
+      '#..........#',
+      '#..........W',
+      '#..........#',
+      '#SS##D###SS#'],
+    f: [['cooler', 1, 1], ['cooler', 2, 1], ['rack', 4, 1], ['rack', 5, 1], ['rack', 6, 1], ['rack', 7, 1],
+        ['rack', 2, 3], ['rack', 3, 3], ['rack', 4, 3], ['rack', 5, 3],
+        ['rack', 1, 5], ['rack', 1, 6], ['checkout', 7, 6],
+        ['boxes', 9, 1], ['boxes', 10, 1], ['boxes', 10, 3]],
+    z: [[3, 6], [9, 5], [6, 2]] },
 ];
 for (const t of TEMPLATES) { t.h = t.grid.length; t.w = t.grid[0].length; }
 
@@ -79,13 +103,15 @@ function layoutBuilding(b) {
   const mx = x => b.mirror ? W - 1 - x : x;
   const cells = [];
   for (let y = 0; y < H; y++) { cells.push([]); for (let x = 0; x < W; x++) cells[y].push(t.grid[y][mx(x)]); }
-  const isWallish = c => c === '#' || c === 'D' || c === 'd' || c === 'W';
+  const isWallish = c => c === '#' || c === 'D' || c === 'd' || c === 'W' || c === 'S';
   const openings = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const c = cells[y][x];
-    if (c !== 'D' && c !== 'd' && c !== 'W') continue;
+    if (c !== 'D' && c !== 'd' && c !== 'W' && c !== 'S') continue;
     const horiz = (x > 0 && isWallish(cells[y][x - 1])) || (x < W - 1 && isWallish(cells[y][x + 1]));
-    openings.push({ x, y, kind: c === 'W' ? 'window' : 'door', outer: c !== 'd', horiz, south: y === H - 1, north: y === 0 });
+    const o = { x, y, kind: c === 'W' || c === 'S' ? 'window' : 'door', outer: c !== 'd', horiz, south: y === H - 1, north: y === 0 };
+    if (c === 'S') o.shop = x < W - 1 && cells[y][x + 1] === 'S' ? 'L' : 'R';   // which half of the wide window
+    openings.push(o);
   }
   const furniture = t.f.map(([name, fx, fy], i) => {
     const F = FURN[name];
@@ -112,11 +138,12 @@ function regionPlan(gen, rx, ry) {
     for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (gen.field(x, y).isWater) return false;
     return true;
   };
+  const HOUSES = TEMPLATES.filter(t => !t.kind).length;   // templates that can be houses
   const tryPlace = (tpl, x, y) => {
     const t = TEMPLATES[tpl];
     if (!waterFree(x - LOT_MARGIN, y - LOT_MARGIN, t.w + LOT_MARGIN * 2, t.h + LOT_MARGIN * 2)) return false;
     const b = { id: `${rx},${ry},${plan.buildings.length}`, x, y, w: t.w, h: t.h, tpl,
-      mirror: rnd() < 0.5, mat: Math.floor(rnd() * 3), roofVar: Math.floor(rnd() * 3),
+      mirror: rnd() < 0.5, mat: Math.floor(rnd() * 3), roofVar: Math.floor(rnd() * 3), kind: t.kind || 'house',
       cond: (() => { const c = rnd(); return c < 0.45 ? 'abandoned' : c < 0.8 ? 'looted' : 'locked'; })(),
       seed: hashInt(x, y, s) };
     plan.buildings.push(b);
@@ -128,9 +155,13 @@ function regionPlan(gen, rx, ry) {
     const road = { x: ox + 1, y: roadY, w: REGION - 2, h: 3 };
     if (waterFree(road.x, road.y, road.w, road.h)) {
       plan.roads.push(road);
-      let cx = ox + 3;
+      let cx = ox + 3, n = 0;
+      // Every hamlet has one general store, in one of its first three lots.
+      const storeAt = Math.floor(hash01(rx, ry, s ^ 0x5707) * 3), STORE = TEMPLATES.findIndex(t => t.kind === 'store');
       while (true) {
-        const tpl = Math.floor(rnd() * TEMPLATES.length), t = TEMPLATES[tpl];
+        let tpl = Math.floor(rnd() * HOUSES);
+        if (n++ === storeAt) tpl = STORE;
+        const t = TEMPLATES[tpl];
         if (cx + t.w > ox + REGION - 3) break;
         const setback = 1 + Math.floor(rnd() * 3);
         tryPlace(tpl, cx, roadY - setback - t.h);
@@ -139,7 +170,7 @@ function regionPlan(gen, rx, ry) {
     }
   } else if (r < 0.27) {
     // A lone cabin somewhere in the region.
-    const tpl = rnd() < 0.6 ? Math.floor(rnd() * 2) : Math.floor(rnd() * TEMPLATES.length), t = TEMPLATES[tpl];
+    const tpl = rnd() < 0.6 ? Math.floor(rnd() * 2) : Math.floor(rnd() * HOUSES), t = TEMPLATES[tpl];
     const x = ox + 4 + Math.floor(rnd() * (REGION - 8 - t.w)), y = oy + 4 + Math.floor(rnd() * (REGION - 8 - t.h));
     tryPlace(tpl, x, y);
   }

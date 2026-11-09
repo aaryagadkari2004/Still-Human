@@ -45,7 +45,7 @@ function lightsInView(camX, camY) {
   const out = [], m = 6 * TILE, x0 = camX - m, y0 = camY - m, x1 = camX + BW + m, y1 = camY + BH + m;
   for (const o of objectsIn(x0, y0, x1, y1 + 2 * TILE)) {
     const k = KINDS[o.k];
-    if (k.fire && o.lit) {
+    if (k.fire && fireLit(o)) {
       // Fires flicker: the radius wobbles a little, irregularly.
       const f = Math.sin(frameTime / 90 + o.ph) * 0.5 + Math.sin(frameTime / 37 + o.ph * 3) * 0.3;
       out.push({ x: o.x, y: o.y - 8, r: 5.2 * TILE + f * 6, i: 0.97, warm: 1 });
@@ -93,6 +93,16 @@ function renderNight(camX, camY) {
   // What you can see around yourself: clear up close, fading out to tonight's distance.
   const px = player.x - camX, py = player.y - 18 - camY, near = 2.5 * TILE;
   hole(px, py, T.see, 0.85, [near / T.see, 0.72]);
+  // Flashlight: a cone of light toward the mouse, plus a little spill around you.
+  const fl = activeFlashlight();
+  if (fl) {
+    const reach = 8 * TILE * (fl.charge < 15 ? 0.4 + fl.charge / 25 : 1);   // dims as the batteries die
+    const [mx, my] = mouseWorld(), ang = Math.atan2(my - (player.y - 18), mx - player.x), half = 0.42;
+    const gr = g.createRadialGradient(px, py, 0, px, py, reach);
+    gr.addColorStop(0, 'rgba(0,0,0,0.95)'); gr.addColorStop(0.7, 'rgba(0,0,0,0.8)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.beginPath(); g.moveTo(px, py); g.arc(px, py, reach, ang - half, ang + half); g.closePath(); g.fill();
+    hole(px, py, 1.6 * TILE, 0.5);
+  }
   const lights = lightsInView(camX, camY);
   for (const L of lights) hole(L.x - camX, L.y - camY, L.r, L.i, [0.4, L.i * 0.75]);
   // Inside a house the lights are on.

@@ -20,15 +20,15 @@ const ANIMAL_TYPES = {
   raccoon: { name: 'Raccoon', img: 'animalRaccoon', death: 'animalRaccoonDeath', hp: 24,  walk: 22, run: 112, radius: 7,  shadow: [9, 2],  animRate: 5,
              kind: 'thief', fear: 2.5 * TILE, knockMul: 0.8, stunMul: 0.8 },
  // Farm animals: only on farms, living in the paddock. All passive; hit one and it runs.
-  cow:     { name: 'Cow',     img: 'farmCow',     hp: 200, walk: 16, run: 92,  radius: 14, shadow: [16, 4], animRate: 2.6, kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
-  pig:     { name: 'Pig',     img: 'farmPig',     hp: 90,  walk: 18, run: 104, radius: 10, shadow: [12, 3], animRate: 3.4, kind: 'farm', knockMul: 0.4,  stunMul: 0.5 },
-  chicken: { name: 'Chicken', img: 'farmChicken', hp: 8,   walk: 20, run: 112, radius: 4,  shadow: [5, 2],  animRate: 6,   kind: 'farm', scatter: 1.5 * TILE, knockMul: 1, stunMul: 1 },
-  horse:   { name: 'Horse',   img: 'farmHorse',   hp: 220, walk: 24, run: 170, radius: 14, shadow: [16, 4], animRate: 3,   kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
+  cow:     { name: 'Cow',     img: 'farmCow', death: 'farmCowDeath',     hp: 200, walk: 16, run: 92,  radius: 14, shadow: [16, 4], animRate: 2.6, kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
+  pig:     { name: 'Pig',     img: 'farmPig', death: 'farmPigDeath',     hp: 90,  walk: 18, run: 104, radius: 10, shadow: [12, 3], animRate: 3.4, kind: 'farm', knockMul: 0.4,  stunMul: 0.5 },
+  chicken: { name: 'Chicken', img: 'farmChicken', death: 'farmChickenDeath', hp: 8,   walk: 20, run: 112, radius: 4,  shadow: [5, 2],  animRate: 6,   kind: 'farm', scatter: 1.5 * TILE, knockMul: 1, stunMul: 1 },
+  horse:   { name: 'Horse',   img: 'farmHorse', death: 'farmHorseDeath',   hp: 220, walk: 24, run: 170, radius: 14, shadow: [16, 4], animRate: 3,   kind: 'farm', knockMul: 0.15, stunMul: 0.3 },
   // Farm dogs: wary of strangers, but they come over if you carry food, and feeding one tames it.
   // A tame dog follows you around.
-  shepherd: { name: 'German shepherd',    img: 'dogShepherd', hp: 60, walk: 30, run: 150, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.6, stunMul: 0.6 },
-  collie:   { name: 'Border collie',      img: 'dogCollie',   hp: 50, walk: 30, run: 155, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.7, stunMul: 0.7 },
-  terrier:  { name: 'Jack Russell terrier', img: 'dogTerrier', hp: 35, walk: 30, run: 145, radius: 5, shadow: [7, 2], animRate: 5, kind: 'dog', knockMul: 0.9, stunMul: 0.9 },
+  shepherd: { name: 'German shepherd',    img: 'dogShepherd', death: 'dogShepherdDeath', hp: 60, walk: 30, run: 150, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.6, stunMul: 0.6 },
+  collie:   { name: 'Border collie',      img: 'dogCollie', death: 'dogCollieDeath',   hp: 50, walk: 30, run: 155, radius: 7, shadow: [9, 2], animRate: 4, kind: 'dog', knockMul: 0.7, stunMul: 0.7 },
+  terrier:  { name: 'Jack Russell terrier', img: 'dogTerrier', death: 'dogTerrierDeath', hp: 35, walk: 30, run: 145, radius: 5, shadow: [7, 2], animRate: 5, kind: 'dog', knockMul: 0.9, stunMul: 0.9 },
 };
 // Foods a dog will take from you.
 const DOG_FOODS = ['dogfood', 'peanutbutter'];
